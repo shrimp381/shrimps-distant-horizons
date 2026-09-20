@@ -1,8 +1,8 @@
 {
   "id": "shrimps-distant-horizons",
   "title": "Shrimp's Distant Horizons",
-  "description": "A parallax horizon and points-of-interest overlay window for your scenes. v0.1.0 is a UI/interaction prototype — see the README for status and roadmap.",
-  "version": "0.1.0",
+  "description": "A parallax horizon and points-of-interest overlay window for your scenes. v0.1.x is a UI/interaction prototype — see the README for status and roadmap.",
+  "version": "0.1.1",
   "compatibility": {
     "minimum": "11",
     "verified": "12"
@@ -18,10 +18,10 @@
   "styles": [
     "styles/distant-horizons.css"
   ],
-  "url": "https://github.com/shrimp381/shrimps-distant-horizons",
-  "manifest": "https://raw.githubusercontent.com/shrimp381/shrimps-distant-horizons/main/module.json",
-  "download": "https://github.com/shrimp381/shrimps-distant-horizons/releases/latest/download/module.zip",
-  "readme": "https://github.com/shrimp381/shrimps-distant-horizons/blob/main/README.md",
-  "bugs": "https://github.com/shrimp381/shrimps-distant-horizons/issues",
+  "url": "https://github.com/Shrimp381/shrimps-distant-horizons",
+  "manifest": "https://raw.githubusercontent.com/Shrimp381/shrimps-distant-horizons/main/module.json",
+  "download": "https://github.com/Shrimp381/shrimps-distant-horizons/releases/latest/download/module.zip",
+  "readme": "https://github.com/Shrimp381/shrimps-distant-horizons/blob/main/README.md",
+  "bugs": "https://github.com/Shrimp381/shrimps-distant-horizons/issues",
   "license": "LICENSE"
 }
