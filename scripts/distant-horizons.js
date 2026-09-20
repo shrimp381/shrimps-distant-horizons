@@ -717,6 +717,11 @@ function initDistantHorizonsUI(){
       container.appendChild(poiEl);
     });
     updateVisuals();
+    // Covers both direct POI edits and layer edits (initLayers() always
+    // calls renderPOIs() at its own end) — one debounced save point for
+    // almost every persistable mutation. See "Scene persistence + GM →
+    // player sync" below for what's actually shared vs. kept local.
+    scheduleSave();
   }
 
   // Pans the horizon so this POI's marker sits in the centre of the view,
@@ -831,7 +836,15 @@ function initDistantHorizonsUI(){
     requestAnimationFrame(updateVisuals);
   });
   window.addEventListener('mouseup', () => {
-    isPanning = false; horizonView.classList.remove('dragging'); poiDrag = null;
+    isPanning = false; horizonView.classList.remove('dragging');
+    // A POI drag updates poi.xPos/offsetY directly every frame (via
+    // updateVisuals(), not renderPOIs()) so dragging stays smooth — but
+    // that means it never went through renderPOIs()'s scheduleSave()
+    // call either, so the new position was never saved or pushed to
+    // players. Save once here, when the drag actually ends.
+    const wasDraggingPoi = !!poiDrag;
+    poiDrag = null;
+    if (wasDraggingPoi) scheduleSave();
   });
 
   horizonView.addEventListener('touchstart', (e) => {
@@ -1160,6 +1173,7 @@ function initDistantHorizonsUI(){
   lockViewBtn.addEventListener('click', () => {
     state.viewLocked = !state.viewLocked;
     applyLockView();
+    scheduleSave();
   });
 
   function updateSubtitle(){
@@ -1187,6 +1201,7 @@ function initDistantHorizonsUI(){
     if (!btn) return;
     state.daytime = btn.dataset.time;
     applyDaytime();
+    scheduleSave();
   });
   applyDaytime();
 
@@ -1257,12 +1272,11 @@ function initDistantHorizonsUI(){
     renderPOIs();
   });
   document.getElementById('opt-palette').addEventListener('change', (e) => {
-    state.palette = e.target.value;
-    document.documentElement.setAttribute('data-palette', state.palette);
-    // Re-tint the terrain layers to match the new palette's mood too.
-    applyLayerPaletteColors(state.palette);
-    renderLayerRows();
-    initLayers();
+    applyPalette(e.target.value);
+    // A deliberate GM push — see "Scene persistence + GM → player sync"
+    // further down. Takes over for everyone, including a player who'd
+    // picked their own palette since the GM's last push.
+    pushPaletteIfGm();
   });
 
   const HORIZON_LENGTH_DESC = {
@@ -1273,6 +1287,7 @@ function initDistantHorizonsUI(){
   document.getElementById('opt-horizon-length').addEventListener('change', (e) => {
     state.horizonLength = e.target.value;
     document.getElementById('horizon-length-desc').textContent = HORIZON_LENGTH_DESC[state.horizonLength];
+    scheduleSave();
   });
 
   /* ---------------- Window drag ---------------- */
@@ -1590,7 +1605,173 @@ function initDistantHorizonsUI(){
     });
   }
 
+  /* ---------------- Scene persistence + GM → player sync ----------------
+     The shared parts of a horizon setup — terrain layers, POIs, palette,
+     horizon length, day/night state and the view lock — are what the GM
+     builds and wants every player to see, so they're saved on the current
+     *scene* (scene.setFlag) rather than a world setting: a GM running a
+     multi-leg journey will typically swap scenes per leg, and each scene
+     keeps its own horizon. Free Dock, window position/size, the local
+     GM/Player preview toggle, and cosmetic display prefs (compass
+     mode/opacity, drag hint, full-colour icons) stay exactly as before —
+     purely local, per-browser, never saved or shared.
+
+     Foundry already pushes every Scene update to all connected clients
+     over its own socket layer and fires an 'updateScene' hook on each of
+     them, and a client that joins later just reads the current flag value
+     straight off the scene document — so writing to scene.setFlag is
+     *both* the save and the live push to players, no separate socket
+     channel needed. Only an actual GM's client may write (game.user.isGM),
+     so a player who happens to have the local GM-preview toggle on can
+     never overwrite the real shared setup — their edits just won't save. */
+  function activeScene(){
+    return (typeof canvas !== 'undefined' && canvas.scene) || game.scenes?.viewed || null;
+  }
+  function buildHorizonConfigPayload(){
+    // Palette is deliberately NOT part of this payload — it has its own
+    // scene flag and its own sync/apply functions below ("Palette sync"),
+    // so that a routine save here (a POI move, a layer edit, day/night...)
+    // never carries a stale palette value that would stomp a player's own
+    // local override.
+    return {
+      v: 1,
+      layers: layerConfig.map(l => ({ ...l })),
+      pois: state.pois.map(p => ({ ...p })),
+      nextPoiId: state.nextPoiId,
+      horizonLength: state.horizonLength,
+      daytime: state.daytime,
+      viewLocked: state.viewLocked
+    };
+  }
+  let saveTimer = null;
+  // Guards against writing straight back what we just received — set
+  // while an incoming (or just-loaded) payload is being applied.
+  let applyingRemote = false;
+  function scheduleSave(){
+    if (!game.user?.isGM) return;
+    if (applyingRemote) return;
+    const scene = activeScene();
+    if (!scene) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    // Debounced — a POI drag or a burst of layer edits fires this many
+    // times a second; only the settled result after ~half a second of
+    // quiet actually needs to hit the database and push to players.
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      scene.setFlag(MODULE_ID, 'horizonConfig', buildHorizonConfigPayload()).catch(err => {
+        console.error(`${MODULE_ID} | failed to save horizon config to scene`, err);
+        ui.notifications?.error("Distant Horizons: couldn't save to this scene — check your permissions.");
+      });
+    }, 500);
+  }
+  function applyHorizonConfigPayload(payload, { rerender = true } = {}){
+    if (!payload) return;
+    applyingRemote = true;
+    try {
+      if (Array.isArray(payload.layers) && payload.layers.length) {
+        payload.layers.forEach((saved, i) => { if (layerConfig[i] && saved) Object.assign(layerConfig[i], saved); });
+      }
+      if (Array.isArray(payload.pois)) state.pois = payload.pois.map(p => ({ ...p }));
+      if (typeof payload.nextPoiId === 'number') state.nextPoiId = payload.nextPoiId;
+      if (payload.horizonLength) {
+        state.horizonLength = payload.horizonLength;
+        const lenSel = document.getElementById('opt-horizon-length');
+        if (lenSel) lenSel.value = state.horizonLength;
+        const lenDesc = document.getElementById('horizon-length-desc');
+        if (lenDesc) lenDesc.textContent = HORIZON_LENGTH_DESC[state.horizonLength];
+      }
+      if (payload.daytime) { state.daytime = payload.daytime; applyDaytime(); }
+      if (typeof payload.viewLocked === 'boolean') { state.viewLocked = payload.viewLocked; applyLockView(); }
+      if (rerender) { renderLayerRows(); initLayers(); renderPoiTable(); }
+    } finally {
+      applyingRemote = false;
+    }
+  }
+  function loadHorizonConfigForActiveScene(opts){
+    const scene = activeScene();
+    const payload = scene?.getFlag(MODULE_ID, 'horizonConfig');
+    if (payload) applyHorizonConfigPayload(payload, opts);
+  }
+
+  /* ---- Palette sync: the GM's palette pushes as an initial/updated
+     default, but a player who then picks their own is left alone — not
+     immediately re-stomped by the next unrelated config save above (a POI
+     move, a layer edit...) — until the GM deliberately pushes a NEW
+     palette, which takes over again for everyone. Tracked with a small
+     revision number on its own scene flag, kept separate from
+     horizonConfig above specifically so "the GM changed the palette again"
+     and "something else about the horizon changed" stay distinguishable. */
+  let paletteRev = 0;
+  let lastAppliedPaletteRev = -1;
+  function applyPalette(paletteName){
+    state.palette = paletteName;
+    document.documentElement.setAttribute('data-palette', state.palette);
+    // Re-tint the terrain layers to match the new palette's mood too.
+    applyLayerPaletteColors(state.palette);
+    renderLayerRows();
+    initLayers();
+    const paletteSel = document.getElementById('opt-palette');
+    if (paletteSel) paletteSel.value = state.palette;
+  }
+  function pushPaletteIfGm(){
+    if (!game.user?.isGM) return;
+    const scene = activeScene();
+    if (!scene) return;
+    paletteRev += 1;
+    lastAppliedPaletteRev = paletteRev; // already applied locally by the caller
+    scene.setFlag(MODULE_ID, 'horizonPalette', { palette: state.palette, rev: paletteRev }).catch(err => {
+      console.error(`${MODULE_ID} | failed to push palette to scene`, err);
+      ui.notifications?.error("Distant Horizons: couldn't push the palette — check your permissions.");
+    });
+  }
+  function acceptPalettePush(payload){
+    if (!payload || typeof payload.rev !== 'number') return;
+    // Keep our own counter in step regardless, so a GM who reloads
+    // mid-session still hands out fresh, higher revision numbers on their
+    // next change instead of reusing one a player has already seen (which
+    // would make that later push look stale and get ignored below).
+    paletteRev = Math.max(paletteRev, payload.rev);
+    // A player's own local override IS allowed to be replaced here — but
+    // only by a revision newer than the one they last accepted (their own
+    // override doesn't advance lastAppliedPaletteRev), so this only fires
+    // for a genuinely new GM push, never for a routine config save that
+    // happens to still reference the old palette.
+    if (payload.palette && payload.rev > lastAppliedPaletteRev) {
+      applyPalette(payload.palette);
+      lastAppliedPaletteRev = payload.rev;
+    }
+  }
+  function loadPushedPaletteForActiveScene(){
+    const scene = activeScene();
+    const payload = scene?.getFlag(MODULE_ID, 'horizonPalette');
+    if (payload) acceptPalettePush(payload);
+  }
+
+  // React only to changes another client made — never to the echo of our
+  // own save, which would otherwise re-render mid-drag or mid-keystroke
+  // on the GM's own screen.
+  Hooks.on('updateScene', (scene, changes, options, userId) => {
+    if (userId === game.user?.id) return;
+    if (activeScene()?.id !== scene.id) return;
+    if (!changes.flags?.[MODULE_ID]) return;
+    if ('horizonConfig' in changes.flags[MODULE_ID]) loadHorizonConfigForActiveScene();
+    if ('horizonPalette' in changes.flags[MODULE_ID]) acceptPalettePush(changes.flags[MODULE_ID].horizonPalette);
+  });
+  // Switching scenes shows that scene's own saved horizon (or the shipped
+  // defaults, if the GM hasn't set one up on it yet).
+  Hooks.on('canvasReady', () => {
+    loadHorizonConfigForActiveScene();
+    loadPushedPaletteForActiveScene();
+  });
+
   function boot(){
+    // Pull in this scene's saved setup (if any) before the very first
+    // paint, so players and a reconnecting GM see the real thing straight
+    // away instead of the shipped defaults flashing first.
+    loadHorizonConfigForActiveScene({ rerender: false });
+    // Separate from the above: this scene's last-pushed palette (or, for
+    // the GM's own reload, their own last push).
+    loadPushedPaletteForActiveScene();
     preloadBuiltinImages(layerConfig, () => {
       renderLayerRows();
       initLayers();
