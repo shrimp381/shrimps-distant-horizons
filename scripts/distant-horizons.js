@@ -24,6 +24,10 @@ const DISTANT_HORIZONS_MARKUP = `
 
 <div id="dh-window">
 
+  <div id="dh-free-dock-handle" title="Drag to reposition — this browser only">
+    <span></span><span></span><span></span>
+  </div>
+
   <div id="dh-titlebar">
     <div id="dh-draghandle">
       <span id="dh-logo" aria-hidden="true"></span>
@@ -108,6 +112,8 @@ const DISTANT_HORIZONS_MARKUP = `
     </div>
 
   </div>
+
+  <div id="dh-resize-handle" title="Drag to resize — this is the minimum size"></div>
 </div>
 
 <div id="layers-info-popup" class="info-popup" hidden>
@@ -172,6 +178,15 @@ const DISTANT_HORIZONS_MARKUP = `
       </select>
     </div>
     <div class="setting-note" id="horizon-length-desc">Full-length horizon — more dragging to scan the whole view.</div>
+  </div>
+  <div class="gm-only">
+    <hr>
+    <h3>Docking</h3>
+    <div class="setting-row">
+      <label for="opt-free-dock">Free Dock</label>
+      <input type="checkbox" id="opt-free-dock">
+    </div>
+    <div class="setting-note">When docked, drag the small handle above the strip to move it anywhere on your own screen instead of the auto-centred position. This is per-browser — it isn't shared with other players.</div>
   </div>
   <div class="gm-only">
     <hr>
@@ -297,6 +312,11 @@ function initDistantHorizonsUI(){
     scrollX: 500,
     viewMode: 'gm',
     compactMode: false,
+    // Free Dock is a per-browser display preference, not scene data, so it
+    // lives in a client-scoped game.settings entry (registered in
+    // registerModuleSettings() below) rather than following the world.
+    freeDock: game.settings.get(MODULE_ID, 'freeDockEnabled'),
+    freeDockPos: null,
     compassMode: 'full',      // 'full' | 'simple' | 'off'
     compassOpacity: 0.8,
     showDragHint: true,
@@ -1282,13 +1302,138 @@ function initDistantHorizonsUI(){
 
   /* ---------------- Compact dock mode ---------------- */
   let savedRect = null;
+  let compactPositionTimer = null;
+
+  // Docked mode used to just span the full viewport width flush to the
+  // bottom (left:0/right:0/bottom:0), which put it behind Foundry's own
+  // scene-controls column, sidebar and hotbar rather than sitting above
+  // them. This measures Foundry's real UI chrome and insets the docked
+  // strip to fit the gap between the side columns and above the hotbar
+  // instead. It looks for Foundry's standard element ids (#ui-left,
+  // #sidebar — #ui-right on older versions — and #hotbar); if none of
+  // them exist (e.g. this file previewed on its own, outside Foundry)
+  // it leaves the CSS fallback inset in place.
+  function positionCompactDock(){
+    if (!state.compactMode || state.freeDock) return;
+    const margin = 12;
+    const leftEl = document.getElementById('ui-left');
+    const rightEl = document.getElementById('sidebar') || document.getElementById('ui-right');
+    const hotbarEl = document.getElementById('hotbar');
+
+    // Foundry's left toolbar (~56px) and right sidebar (~300px) are very
+    // different widths, so docking flush against each one individually
+    // left the strip looking visibly off-centre. Instead, work out how
+    // much space EACH side actually needs, then reserve the larger of
+    // the two on BOTH sides — that keeps the strip truly centred and
+    // leaves the same breathing room on the narrower (left) side that
+    // the sidebar naturally has, so another module's own toolbar buttons
+    // or panel have room there too.
+    let leftNeeded = margin, rightNeeded = margin;
+    if (leftEl) leftNeeded = leftEl.getBoundingClientRect().right + margin;
+    if (rightEl) rightNeeded = Math.max(0, window.innerWidth - rightEl.getBoundingClientRect().left) + margin;
+    const inset = Math.max(leftNeeded, rightNeeded);
+    dhWindow.style.left = `${inset}px`;
+    dhWindow.style.right = `${inset}px`;
+    if (hotbarEl) dhWindow.style.bottom = `${Math.max(0, window.innerHeight - hotbarEl.getBoundingClientRect().top) + margin}px`;
+  }
+
+  /* ---------------- Free Dock (drag the docked strip anywhere, per-browser) ---------------- */
+  function clampFreeDockX(x){
+    const w = dhWindow.getBoundingClientRect().width || Math.min(820, window.innerWidth * 0.94);
+    return Math.max(0, Math.min(window.innerWidth - w, x));
+  }
+  function clampFreeDockY(y){
+    const h = dhWindow.getBoundingClientRect().height || 158;
+    return Math.max(0, Math.min(window.innerHeight - h, y));
+  }
+  function applyFreeDockPosition(){
+    const saved = game.settings.get(MODULE_ID, 'freeDockPos');
+    if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
+      dhWindow.style.setProperty('--free-dock-left', `${clampFreeDockX(saved.left)}px`);
+      dhWindow.style.setProperty('--free-dock-top', `${clampFreeDockY(saved.top)}px`);
+      return;
+    }
+    // First time Free Dock is turned on: seed it from wherever the
+    // auto-centred dock currently sits (recomputed directly here, since
+    // positionCompactDock() itself no-ops once state.freeDock is true),
+    // so the strip doesn't jump the moment the toggle is flipped.
+    const leftEl = document.getElementById('ui-left');
+    const rightEl = document.getElementById('sidebar') || document.getElementById('ui-right');
+    const hotbarEl = document.getElementById('hotbar');
+    const margin = 12;
+    let leftNeeded = margin, rightNeeded = margin;
+    if (leftEl) leftNeeded = leftEl.getBoundingClientRect().right + margin;
+    if (rightEl) rightNeeded = Math.max(0, window.innerWidth - rightEl.getBoundingClientRect().left) + margin;
+    const inset = Math.max(leftNeeded, rightNeeded);
+    const bottom = hotbarEl ? Math.max(0, window.innerHeight - hotbarEl.getBoundingClientRect().top) + margin : 60;
+    const height = dhWindow.getBoundingClientRect().height || 158;
+    const left = inset;
+    const top = window.innerHeight - bottom - height;
+    dhWindow.style.setProperty('--free-dock-left', `${clampFreeDockX(left)}px`);
+    dhWindow.style.setProperty('--free-dock-top', `${clampFreeDockY(top)}px`);
+  }
+
+  const freeDockHandle = document.getElementById('dh-free-dock-handle');
+  let freeDockDrag = null;
+  freeDockHandle.addEventListener('mousedown', (e) => {
+    if (!state.compactMode || !state.freeDock) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const rect = dhWindow.getBoundingClientRect();
+    freeDockDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!freeDockDrag) return;
+    const dx = e.clientX - freeDockDrag.startClientX;
+    const dy = e.clientY - freeDockDrag.startClientY;
+    const left = clampFreeDockX(freeDockDrag.startLeft + dx);
+    const top = clampFreeDockY(freeDockDrag.startTop + dy);
+    dhWindow.style.setProperty('--free-dock-left', `${left}px`);
+    dhWindow.style.setProperty('--free-dock-top', `${top}px`);
+  });
+  window.addEventListener('mouseup', () => {
+    if (!freeDockDrag) return;
+    const rect = dhWindow.getBoundingClientRect();
+    game.settings.set(MODULE_ID, 'freeDockPos', { left: rect.left, top: rect.top });
+    freeDockDrag = null;
+  });
+
+  const freeDockChk = document.getElementById('opt-free-dock');
+  freeDockChk.checked = state.freeDock;
+  freeDockChk.addEventListener('change', (e) => {
+    state.freeDock = e.target.checked;
+    game.settings.set(MODULE_ID, 'freeDockEnabled', state.freeDock);
+    dhWindow.classList.toggle('free-dock', state.freeDock);
+    if (state.compactMode) {
+      if (state.freeDock) {
+        applyFreeDockPosition();
+      } else {
+        dhWindow.style.removeProperty('--free-dock-left');
+        dhWindow.style.removeProperty('--free-dock-top');
+        positionCompactDock();
+      }
+    }
+  });
+
   function enterCompact(){
     if (state.compactMode) return;
     const rect = dhWindow.getBoundingClientRect();
     savedRect = { left: dhWindow.style.left, top: dhWindow.style.top, widthWas: rect.width };
     state.compactMode = true;
     dhWindow.classList.add('compact');
+    dhWindow.classList.toggle('free-dock', state.freeDock);
+    dhWindow.style.left = ''; // clear any stale inline left from free-dragging so the CSS fallback can apply if #ui-left isn't found
     refreshCustomImageSizes();
+    if (state.freeDock) {
+      applyFreeDockPosition();
+    } else {
+      positionCompactDock();
+    }
+    // Re-measure on a light interval rather than chasing every possible
+    // Foundry event that could resize the sidebar/hotbar (collapsing the
+    // sidebar, changing hotbar page count, etc.) — cheap, and catches all
+    // of them uniformly.
+    compactPositionTimer = window.setInterval(positionCompactDock, 500);
     closeSettings();
     renderPOIs();
   }
@@ -1296,6 +1441,12 @@ function initDistantHorizonsUI(){
     if (!state.compactMode) return;
     state.compactMode = false;
     dhWindow.classList.remove('compact');
+    dhWindow.classList.remove('free-dock');
+    dhWindow.style.removeProperty('--free-dock-left');
+    dhWindow.style.removeProperty('--free-dock-top');
+    if (compactPositionTimer) { window.clearInterval(compactPositionTimer); compactPositionTimer = null; }
+    dhWindow.style.right = '';
+    dhWindow.style.bottom = '';
     refreshCustomImageSizes();
     if (savedRect) { dhWindow.style.left = savedRect.left; dhWindow.style.top = savedRect.top; }
     renderPOIs();
@@ -1311,10 +1462,43 @@ function initDistantHorizonsUI(){
   document.getElementById('dh-reset-btn').addEventListener('click', () => {
     dhWindow.style.left = '3vw';
     dhWindow.style.top = '8vh';
+    dhWindow.style.width = '';
+    dhWindow.style.height = '';
     closeSettings();
   });
 
+  /* ---------------- Window resize (undocked only) ---------------- */
+  const resizeHandle = document.getElementById('dh-resize-handle');
+  let MIN_WIN_WIDTH = 0, MIN_WIN_HEIGHT = 0;
+  let winResize = null;
+  function captureMinWindowSize(){
+    const rect = dhWindow.getBoundingClientRect();
+    MIN_WIN_WIDTH = rect.width;
+    MIN_WIN_HEIGHT = rect.height;
+  }
+  resizeHandle.addEventListener('mousedown', (e) => {
+    if (state.compactMode) return;
+    e.stopPropagation();
+    e.preventDefault();
+    closeSettings();
+    const rect = dhWindow.getBoundingClientRect();
+    winResize = { startClientX: e.clientX, startClientY: e.clientY, startWidth: rect.width, startHeight: rect.height };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!winResize) return;
+    const dx = e.clientX - winResize.startClientX;
+    const dy = e.clientY - winResize.startClientY;
+    const maxWidth = window.innerWidth - 8;
+    const maxHeight = window.innerHeight - 8;
+    const newWidth = Math.max(MIN_WIN_WIDTH, Math.min(maxWidth, winResize.startWidth + dx));
+    const newHeight = Math.max(MIN_WIN_HEIGHT, Math.min(maxHeight, winResize.startHeight + dy));
+    dhWindow.style.width = `${newWidth}px`;
+    dhWindow.style.height = `${newHeight}px`;
+  });
+  window.addEventListener('mouseup', () => { winResize = null; });
+
   window.addEventListener('resize', updateVisuals);
+  window.addEventListener('resize', positionCompactDock);
 
   // Any layer whose starting biome is a built-in image preset (e.g. the
   // default Forest layer) needs that image resolved through the canvas
@@ -1347,6 +1531,10 @@ function initDistantHorizonsUI(){
       initLayers();
       renderPoiTable();
       updateVisuals();
+      // Deferred until after the above synchronous layout work completes,
+      // so the captured "natural size" floor (the resize handle's minimum)
+      // reflects the window's real laid-out content, not an empty shell.
+      requestAnimationFrame(captureMinWindowSize);
     });
   }
 
@@ -1355,6 +1543,31 @@ function initDistantHorizonsUI(){
 }
 
 /* ---------------- Foundry lifecycle ---------------- */
+
+// Free Dock's enabled-state and dragged position are per-browser display
+// preferences, not scene data, so they're registered as client-scoped
+// settings (config: false — there's a dedicated toggle/handle in the
+// module's own UI, no need to also surface these in Foundry's Module
+// Settings screen) rather than world-scoped ones. Must be registered in
+// 'init', before anything reads them.
+function registerModuleSettings(){
+  game.settings.register(MODULE_ID, 'freeDockEnabled', {
+    scope: 'client',
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  game.settings.register(MODULE_ID, 'freeDockPos', {
+    scope: 'client',
+    config: false,
+    type: Object,
+    default: null
+  });
+}
+
+Hooks.once('init', () => {
+  registerModuleSettings();
+});
 
 Hooks.once('ready', () => {
   injectDistantHorizonsMarkup();
