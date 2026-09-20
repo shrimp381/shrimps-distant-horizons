@@ -337,7 +337,13 @@
   /* CONTROLS (GM only)                                             */
   /* ============================================================ */
   #controls{
-    flex:0 0 300px;
+    /* flex-grow:1 (basis 300px, same as before) so resizing the window
+       taller hands the extra height to the layers/POI panels — the part
+       that actually benefits from more room — rather than leaving dead
+       space at the bottom of a flex column with no grow anywhere. At the
+       window's default (unresized) height this renders identically to
+       the old fixed 300px, since there's no extra space to grow into. */
+    flex:1 1 300px; min-height:300px;
     background:var(--ink-900);
     border-top:1px solid var(--brass);
     display:flex; overflow:hidden;
@@ -480,9 +486,14 @@
   /* ============================================================ */
   /* COMPACT DOCKED MODE — no window chrome, no sky, just terrain  */
   /* ============================================================ */
+  /* Fallback box before JS has measured Foundry's real UI chrome (or if it
+     can't find it) — inset enough to clear the standard scene-controls
+     column, sidebar and hotbar rather than spanning edge to edge. JS
+     (positionCompactDock) overrides these with the real measured gaps the
+     moment compact mode is entered. */
   #dh-window.compact{
-    left:0 !important; right:0; top:auto !important; bottom:0;
-    width:100vw; border-radius:0; border:none;
+    left:60px; right:310px; top:auto !important; bottom:60px;
+    width:auto; border-radius:0; border:none;
     background:transparent; box-shadow:none;
     overflow:visible; /* let the compass float above the docked strip */
   }
@@ -490,6 +501,49 @@
   #dh-window.compact #horizon-view{ background:transparent; cursor:grab; }
   #dh-window.compact #horizon-view.dragging{ cursor:grabbing; }
   #dh-window.compact #vignette{ box-shadow:none; }
+
+  /* Free Dock — lets the docked strip be dragged to any position on this
+     browser only, instead of the auto-centred dock above. Positioned via
+     CSS custom properties (set from JS) rather than direct left/top
+     inline styles, because a plain inline style would lose to the
+     #dh-window.compact rule's `top:auto !important` above — using
+     properties consumed only by this more-specific, later, equally
+     !important rule sidesteps that fight cleanly. */
+  #dh-window.compact.free-dock{
+    left: var(--free-dock-left, 50%) !important;
+    right: auto !important;
+    top: var(--free-dock-top, auto) !important;
+    bottom: auto !important;
+    width: min(820px, 94vw);
+  }
+  #dh-free-dock-handle{
+    display:none;
+    position:absolute; top:-14px; left:50%; transform:translateX(-50%);
+    z-index:80; width:46px; height:14px; border-radius:4px 4px 0 0;
+    background:var(--brass); cursor:grab;
+    align-items:center; justify-content:center; gap:3px;
+  }
+  #dh-free-dock-handle:active{ cursor:grabbing; }
+  #dh-free-dock-handle span{
+    width:3px; height:3px; border-radius:50%; background:var(--ink-950); opacity:.75;
+  }
+  #dh-window.compact.free-dock #dh-free-dock-handle{ display:flex; }
+
+  /* Resize handle — undocked window only. The window's natural size at
+     boot (content-driven) is captured in JS as the floor; dragging this
+     grows the window from its top-left anchor and hands the extra width
+     to the POI panel / extra height to the whole controls area (see
+     #controls' flex-grow above), never below that floor. Not shown while
+     docked/compact — that strip is auto-sized. */
+  #dh-resize-handle{
+    position:absolute; right:1px; bottom:1px; width:18px; height:18px;
+    z-index:90; cursor:nwse-resize;
+    background:
+      linear-gradient(135deg, transparent 0 40%, var(--brass) 40% 46%, transparent 46% 60%, var(--brass) 60% 66%, transparent 66% 80%, var(--brass) 80% 86%, transparent 86% 100%);
+    opacity:.5; transition:opacity .12s ease;
+  }
+  #dh-resize-handle:hover{ opacity:.95; }
+  #dh-window.compact #dh-resize-handle{ display:none; }
 
   @media (max-width: 760px){
     #controls{ flex-direction:column; overflow-y:auto; height:auto; }
