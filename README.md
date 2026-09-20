@@ -6,7 +6,7 @@ that GMs can place on the horizon and reveal to players over time.
 
 ![Screenshot](docs/screenshot.png)
 
-## Status — v0.1.2 (prototype)
+## Status — v0.1.3 (prototype)
 
 This first release ports the working **UI and interaction prototype** into a loadable
 Foundry module: the window, layer controls, POI table, day/night toggle, GM/Player view,
@@ -40,9 +40,10 @@ required — wildly overshot on v13, collapsing the available width to nothing. 
 measures the actual *visible children* of those landmarks instead of the landmarks
 themselves, which tracks whatever is really painted on screen on any Foundry version.
 
-**What ships pre-populated vs. blank:**
-- The 6 horizon **layers** come with sensible default terrain (a mix of mountains, forest
-  and hills) so there's something to look at immediately — edit, reorder, or replace any
-  of them from the Layers panel.
-- **Points of Interest start empty.** POIs are scenario-specific, so nothing is placed for
-  you — use "+ Add POI" to place your own.
+**v0.1.3** fixes docking after resizing the window. Dragging the resize handle
+sets an explicit `width`/`height` directly on the window; docking never cleared
+that leftover size, so the "docked" strip stayed pinned at whatever size it had
+last been resized to — a tall box sitting mid-screen — instead of collapsing to
+its intended slim bottom-hugging strip. Docking now clears the inline size (and
+restores it automatically if you undock again), so a resize survives a dock/undock
+cycle without leaking into the docked layout.
