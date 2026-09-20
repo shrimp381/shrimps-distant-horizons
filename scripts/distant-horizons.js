@@ -1313,28 +1313,78 @@ function initDistantHorizonsUI(){
   // #sidebar — #ui-right on older versions — and #hotbar); if none of
   // them exist (e.g. this file previewed on its own, outside Foundry)
   // it leaves the CSS fallback inset in place.
-  function positionCompactDock(){
-    if (!state.compactMode || state.freeDock) return;
+  //
+  // Foundry v13 restructured these landmarks: #ui-left is no longer the
+  // narrow toolbar itself but a much wider layout wrapper around several
+  // columns (scene controls + scene navigation), and #sidebar collapses
+  // to zero width until a tab is expanded (the visible strip is then a
+  // child element, #sidebar-tabs / #sidebar-content). Trusting the
+  // landmark element's OWN bounding box — as v11/v12 required — grossly
+  // overshoots on v13 (e.g. ~960px instead of the real ~72px toolbar),
+  // which is what caused the docked strip to collapse to zero width and
+  // land dead-centre on screen. Measuring the widest/narrowest edge among
+  // the landmark's own VISIBLE children instead tracks whatever is
+  // actually painted on any version — including v11/v12, where the
+  // landmark itself has no meaningful children and this simply falls
+  // back to its own rect.
+  function visibleRightEdge(el){
+    if (!el) return null;
+    const kids = Array.from(el.children).filter(c => {
+      const r = c.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    if (kids.length) return Math.max(...kids.map(c => c.getBoundingClientRect().right));
+    const rect = el.getBoundingClientRect();
+    return (rect.width > 0 && rect.height > 0) ? rect.right : null;
+  }
+  function visibleLeftEdge(el){
+    if (!el) return null;
+    const kids = Array.from(el.children).filter(c => {
+      const r = c.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    if (kids.length) return Math.min(...kids.map(c => c.getBoundingClientRect().left));
+    const rect = el.getBoundingClientRect();
+    return (rect.width > 0 && rect.height > 0) ? rect.left : null;
+  }
+  // Shared by positionCompactDock() and applyFreeDockPosition()'s initial
+  // seed — works out the symmetric inset and the bottom clearance above
+  // the hotbar from Foundry's current UI chrome. Returns nulls for
+  // anything it can't measure so callers can fall back sensibly.
+  function measureDockGeometry(){
     const margin = 12;
     const leftEl = document.getElementById('ui-left');
     const rightEl = document.getElementById('sidebar') || document.getElementById('ui-right');
     const hotbarEl = document.getElementById('hotbar');
 
-    // Foundry's left toolbar (~56px) and right sidebar (~300px) are very
-    // different widths, so docking flush against each one individually
-    // left the strip looking visibly off-centre. Instead, work out how
-    // much space EACH side actually needs, then reserve the larger of
-    // the two on BOTH sides — that keeps the strip truly centred and
-    // leaves the same breathing room on the narrower (left) side that
-    // the sidebar naturally has, so another module's own toolbar buttons
-    // or panel have room there too.
+    // Foundry's left toolbar and right sidebar are very different widths,
+    // so docking flush against each one individually left the strip
+    // looking visibly off-centre. Instead, work out how much space EACH
+    // side actually needs, then reserve the larger of the two on BOTH
+    // sides — that keeps the strip truly centred and leaves the same
+    // breathing room on the narrower side that the wider one naturally
+    // has, so another module's own toolbar buttons or panel have room too.
     let leftNeeded = margin, rightNeeded = margin;
-    if (leftEl) leftNeeded = leftEl.getBoundingClientRect().right + margin;
-    if (rightEl) rightNeeded = Math.max(0, window.innerWidth - rightEl.getBoundingClientRect().left) + margin;
+    const leftEdge = visibleRightEdge(leftEl);
+    if (leftEdge !== null) leftNeeded = leftEdge + margin;
+    const rightEdge = visibleLeftEdge(rightEl);
+    if (rightEdge !== null) rightNeeded = Math.max(0, window.innerWidth - rightEdge) + margin;
     const inset = Math.max(leftNeeded, rightNeeded);
+
+    let bottom = null;
+    if (hotbarEl) {
+      const hRect = hotbarEl.getBoundingClientRect();
+      if (hRect.width > 0 && hRect.height > 0) bottom = Math.max(0, window.innerHeight - hRect.top) + margin;
+    }
+    return { inset, bottom };
+  }
+
+  function positionCompactDock(){
+    if (!state.compactMode || state.freeDock) return;
+    const { inset, bottom } = measureDockGeometry();
     dhWindow.style.left = `${inset}px`;
     dhWindow.style.right = `${inset}px`;
-    if (hotbarEl) dhWindow.style.bottom = `${Math.max(0, window.innerHeight - hotbarEl.getBoundingClientRect().top) + margin}px`;
+    if (bottom !== null) dhWindow.style.bottom = `${bottom}px`;
   }
 
   /* ---------------- Free Dock (drag the docked strip anywhere, per-browser) ---------------- */
@@ -1357,15 +1407,9 @@ function initDistantHorizonsUI(){
     // auto-centred dock currently sits (recomputed directly here, since
     // positionCompactDock() itself no-ops once state.freeDock is true),
     // so the strip doesn't jump the moment the toggle is flipped.
-    const leftEl = document.getElementById('ui-left');
-    const rightEl = document.getElementById('sidebar') || document.getElementById('ui-right');
-    const hotbarEl = document.getElementById('hotbar');
-    const margin = 12;
-    let leftNeeded = margin, rightNeeded = margin;
-    if (leftEl) leftNeeded = leftEl.getBoundingClientRect().right + margin;
-    if (rightEl) rightNeeded = Math.max(0, window.innerWidth - rightEl.getBoundingClientRect().left) + margin;
-    const inset = Math.max(leftNeeded, rightNeeded);
-    const bottom = hotbarEl ? Math.max(0, window.innerHeight - hotbarEl.getBoundingClientRect().top) + margin : 60;
+    const geo = measureDockGeometry();
+    const inset = geo.inset;
+    const bottom = geo.bottom !== null ? geo.bottom : 60;
     const height = dhWindow.getBoundingClientRect().height || 158;
     const left = inset;
     const top = window.innerHeight - bottom - height;
