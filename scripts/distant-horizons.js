@@ -1461,12 +1461,25 @@ function initDistantHorizonsUI(){
 
   function enterCompact(){
     if (state.compactMode) return;
-    const rect = dhWindow.getBoundingClientRect();
-    savedRect = { left: dhWindow.style.left, top: dhWindow.style.top, widthWas: rect.width };
+    savedRect = {
+      left: dhWindow.style.left, top: dhWindow.style.top,
+      // Capture the resize handle's explicit size too (undocked-only —
+      // it never applies while compact), so it can be restored on exit.
+      width: dhWindow.style.width, height: dhWindow.style.height
+    };
     state.compactMode = true;
     dhWindow.classList.add('compact');
     dhWindow.classList.toggle('free-dock', state.freeDock);
     dhWindow.style.left = ''; // clear any stale inline left from free-dragging so the CSS fallback can apply if #ui-left isn't found
+    // Clear any explicit width/height left over from resizing the window
+    // while undocked — the docked strip has its own fixed, auto-sized
+    // dimensions (driven by .compact's CSS + the collapsed horizon
+    // height), and an inline size from a prior resize would otherwise
+    // override that (inline styles beat non-!important CSS), pinning the
+    // "docked" strip at whatever size it happened to be resized to
+    // instead of collapsing to the slim bottom-hugging strip.
+    dhWindow.style.width = '';
+    dhWindow.style.height = '';
     refreshCustomImageSizes();
     if (state.freeDock) {
       applyFreeDockPosition();
@@ -1492,7 +1505,15 @@ function initDistantHorizonsUI(){
     dhWindow.style.right = '';
     dhWindow.style.bottom = '';
     refreshCustomImageSizes();
-    if (savedRect) { dhWindow.style.left = savedRect.left; dhWindow.style.top = savedRect.top; }
+    if (savedRect) {
+      dhWindow.style.left = savedRect.left;
+      dhWindow.style.top = savedRect.top;
+      // Restore whatever explicit size the user had resized the window to
+      // before docking (undocked-only — compact mode ignores these), so a
+      // resize isn't silently lost across a dock/undock cycle.
+      dhWindow.style.width = savedRect.width;
+      dhWindow.style.height = savedRect.height;
+    }
     renderPOIs();
   }
   draghandle.addEventListener('dblclick', () => {
