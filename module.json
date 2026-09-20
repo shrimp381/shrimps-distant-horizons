@@ -2,10 +2,10 @@
   "id": "shrimps-distant-horizons",
   "title": "Shrimp's Distant Horizons",
   "description": "A parallax horizon and points-of-interest overlay window for your scenes. v0.1.x is a UI/interaction prototype — see the README for status and roadmap.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "compatibility": {
-    "minimum": "11",
-    "verified": "12"
+    "minimum": "13",
+    "verified": "13"
   },
   "authors": [
     {
