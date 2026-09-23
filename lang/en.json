@@ -159,7 +159,8 @@
 
     "Notify": {
       "SaveError": "Distant Horizons: couldn't save to this scene — check your permissions.",
-      "PaletteError": "Distant Horizons: couldn't push the palette — check your permissions."
+      "PaletteError": "Distant Horizons: couldn't push the palette — check your permissions.",
+      "UploadError": "Distant Horizons: couldn't upload that image — check your file-storage permissions."
     }
   }
 }

@@ -16,6 +16,63 @@ const MODULE_ID = 'shrimps-distant-horizons';
 const MODULE_BASE = `modules/${MODULE_ID}/`;
 const TEMPLATE_BASE = `${MODULE_BASE}templates/`;
 
+/* ---------------- Foundry file storage (layer/POI image uploads) ----------------
+   Uploaded layer and POI images go through Foundry's own FilePicker.upload()
+   into the world's Data storage (worlds/<world-id>/shrimps-distant-horizons/…),
+   the same as any other Foundry asset — never inlined as base64 data: URIs.
+   A data: URI embeds the full image bytes (~33% larger, base64-encoded)
+   directly into the Scene document's flags on every save, which bloats the
+   scene, is re-sent in full on every sync push, and bypasses Foundry's own
+   asset caching entirely. FilePicker.upload() instead saves the real file to
+   disk and returns a lightweight relative path, which is all that's stored
+   and synced — exactly like an image any other Foundry document (a Tile, a
+   JournalEntry, an Actor portrait) would reference. */
+const _dhEnsuredDirs = new Set();
+async function ensureModuleUploadDir(subdir){
+  const FP = foundry.applications.apps.FilePicker.implementation;
+  const worldId = game.world.id;
+  const base = `worlds/${worldId}/${MODULE_ID}`;
+  const full = `${base}/${subdir}`;
+  if (_dhEnsuredDirs.has(full)) return;
+  // createDirectory() isn't recursive — the parent has to exist before the
+  // child does — and throws if a directory already exists, which is the
+  // expected/common case after the first upload, so that's swallowed.
+  for (const dir of [base, full]) {
+    if (_dhEnsuredDirs.has(dir)) continue;
+    try { await FP.createDirectory('data', dir); }
+    catch (err) { /* already exists — fine */ }
+    _dhEnsuredDirs.add(dir);
+  }
+}
+/** Uploads `file` into the module's own world-scoped storage under `subdir`
+ *  ("layers" or "pois") and returns the resulting relative path (a real,
+ *  lightweight URL Foundry can serve — not a base64 data: URI). Returns
+ *  null and shows a notification on failure. GM-only in practice (the
+ *  upload controls themselves only render for a GM — see the isGM guards
+ *  in templates/window.hbs), and Foundry's own upload permission check
+ *  applies regardless. */
+async function uploadModuleImage(file, subdir){
+  const FP = foundry.applications.apps.FilePicker.implementation;
+  try {
+    await ensureModuleUploadDir(subdir);
+    const dir = `worlds/${game.world.id}/${MODULE_ID}/${subdir}`;
+    // Timestamp-prefixed so re-uploading a same-named file (e.g. "forest.png"
+    // for two different layers) never silently overwrites another layer's
+    // or POI's already-saved image.
+    const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
+    const uploadFile = new File([file], `${Date.now()}-${safeName}`, { type: file.type });
+    const result = await FP.upload('data', dir, uploadFile, {}, { notify: false });
+    if (!result || result === false || !result.path) {
+      throw new Error('Foundry FilePicker upload did not return a saved file path');
+    }
+    return result.path;
+  } catch (err) {
+    console.error(`${MODULE_ID} | image upload failed`, err);
+    ui.notifications?.error(game.i18n.localize('SHRIMPSDH.Notify.UploadError'));
+    return null;
+  }
+}
+
 const ICONS = {
   lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>`,
   unlock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 7.4-2.1"></path></svg>`,
@@ -29,9 +86,13 @@ const ICONS = {
   check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"></path></svg>`
 };
 
+// Display-only path shown in upload-button tooltips — the module's own
+// upload directories, matching what uploadModuleImage()/ensureModuleUploadDir()
+// above actually write to. Not resolvable until game.world is ready, so this
+// stays a getter-backed object rather than a static string built at load time.
 const STORAGE = {
-  layersUpload: 'worlds/<world-id>/distant-horizons/layers/',
-  poisUpload: 'worlds/<world-id>/distant-horizons/pois/'
+  get layersUpload(){ return `worlds/${game.world.id}/${MODULE_ID}/layers/`; },
+  get poisUpload(){ return `worlds/${game.world.id}/${MODULE_ID}/pois/`; }
 };
 
 /* ---------------- Default per-instance state factories ---------------- */
@@ -248,11 +309,6 @@ function escapeHtml(str){
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML;
-}
-function readImageFile(file, cb){
-  const reader = new FileReader();
-  reader.onload = () => cb(reader.result);
-  reader.readAsDataURL(file);
 }
 // Builds a [image][horizontally-flipped copy] tile on a canvas. Tiling
 // that doubled image with repeat-x is guaranteed seam-free for ANY
@@ -781,7 +837,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
-  _onLayerRowsChange(e){
+  async _onLayerRowsChange(e){
     const t = e.target;
     const layerId = parseInt(t.dataset.layerId, 10);
     const layer = this.layerConfig.find(l => l.id === layerId);
@@ -791,17 +847,23 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     } else if (t.classList.contains('layer-file-input')) {
       const file = t.files[0];
       if (!file) return;
-      readImageFile(file, (dataUrl) => {
-        layer.customImageRaw = dataUrl; layer.customImageName = file.name;
-        if (layer.mirrorTile === undefined) layer.mirrorTile = true;
-        if (layer.tintToColor === undefined) layer.tintToColor = true;
-        layer.imageSettingsOpen = true;
-        layer.customImageBuiltin = false;
-        processCustomImage(layer, (finalUrl, dims) => {
-          layer.customImage = finalUrl;
-          layer.customImageDims = dims;
-          this.render();
-        });
+      // Goes to Foundry's own file storage (uploadModuleImage), not a
+      // base64 data: URI — see that function's comment for why. The file
+      // input is cleared either way so re-picking the same filename still
+      // fires a fresh 'change' event next time.
+      const uploadedPath = await uploadModuleImage(file, 'layers');
+      t.value = '';
+      if (!uploadedPath) return;
+      layer.customImageRaw = uploadedPath; layer.customImageName = file.name;
+      if (layer.mirrorTile === undefined) layer.mirrorTile = true;
+      if (layer.tintToColor === undefined) layer.tintToColor = true;
+      layer.imageSettingsOpen = true;
+      layer.customImageBuiltin = false;
+      processCustomImage(layer, (finalUrl, dims) => {
+        layer.customImage = finalUrl;
+        layer.customImageDims = dims;
+        layer._processedFromRaw = layer.customImageRaw;
+        this.render();
       });
     }
   }
@@ -825,7 +887,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
-  _onPoiListChange(e){
+  async _onPoiListChange(e){
     const t = e.target;
     const poiId = parseInt(t.dataset.poiId, 10);
     const poi = this.uiState.pois.find(p => p.id === poiId);
@@ -839,7 +901,15 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     } else if (t.classList.contains('poi-icon-file')) {
       const file = t.files[0];
       if (!file) return;
-      readImageFile(file, (dataUrl) => { poi.customIcon = dataUrl; this.render(); });
+      // Goes to Foundry's own file storage, not a base64 data: URI — a POI
+      // icon has no mirror-tile/derived-image step, so the uploaded path
+      // IS the final customIcon value, no separate raw/processed split
+      // needed (unlike layer images — see uploadModuleImage/processCustomImage).
+      const uploadedPath = await uploadModuleImage(file, 'pois');
+      t.value = '';
+      if (!uploadedPath) return;
+      poi.customIcon = uploadedPath;
+      this.render();
     } else if (t.classList.contains('poi-layer-select')) {
       // Keep the POI exactly where it visually is on screen — reassigning
       // a layer shouldn't teleport it, just change which terrain it's
@@ -930,6 +1000,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     processCustomImage(layer, (finalUrl, dims) => {
       layer.customImage = finalUrl;
       layer.customImageDims = dims;
+      layer._processedFromRaw = layer.customImageRaw;
       this.render();
     });
   }
@@ -953,6 +1024,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!layer) return;
     layer.customImage = null; layer.customImageName = null; layer.customImageRaw = null;
     layer.customImageDims = null;
+    layer._processedFromRaw = null;
     layer.imageSettingsOpen = false;
     // Forest has no procedural fallback (it's image-only), so clearing an
     // image-based layer needs a real biome to land on.
@@ -1062,6 +1134,11 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       processCustomImage(layer, (finalUrl, dims) => {
         layer.customImage = finalUrl;
         layer.customImageDims = dims;
+        // Marks this derived bitmap as already up to date with the raw
+        // source it was just built from, so a later _resolveLayerImages
+        // pass (e.g. after this gets saved/synced and reloaded) doesn't
+        // needlessly reprocess it again.
+        layer._processedFromRaw = layer.customImageRaw;
         cb();
       });
     } else {
@@ -1069,6 +1146,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       layer.customImage = null; layer.customImageName = null; layer.customImageRaw = null;
       layer.customImageDims = null;
       layer.customImageBuiltin = false;
+      layer._processedFromRaw = null;
       cb();
     }
   }
@@ -1603,7 +1681,20 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // local override.
     return {
       v: 1,
-      layers: this.layerConfig.map(l => ({ ...l })),
+      layers: this.layerConfig.map(l => {
+        // customImage/customImageDims are the DERIVED bitmap — mirror-tiled
+        // and/or tint-baked by processCustomImage() from customImageRaw —
+        // not the source image itself. They're plain base64 data: URIs and
+        // can be regenerated locally from customImageRaw at any time (see
+        // _resolveLayerImages), so excluding them here keeps this payload
+        // (and the socket push to every connected player) to the lightweight
+        // source reference only, instead of carrying a second, derivative
+        // copy of the same image on every save. _processedFromRaw is purely
+        // local bookkeeping (which raw value the derived fields currently
+        // reflect) and has no meaning on another client either.
+        const { customImage, customImageDims, _processedFromRaw, ...rest } = l;
+        return rest;
+      }),
       pois: this.uiState.pois.map(p => ({ ...p })),
       nextPoiId: this.uiState.nextPoiId,
       horizonLength: this.uiState.horizonLength,
@@ -1634,26 +1725,49 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     });
   }
   _applyHorizonConfigPayload(payload, { rerender = true } = {}){
-    if (!payload) return;
+    if (!payload) return Promise.resolve();
     this._applyingRemote = true;
-    try {
-      if (Array.isArray(payload.layers) && payload.layers.length) {
-        payload.layers.forEach((saved, i) => { if (this.layerConfig[i] && saved) Object.assign(this.layerConfig[i], saved); });
-      }
-      if (Array.isArray(payload.pois)) this.uiState.pois = payload.pois.map(p => ({ ...p }));
-      if (typeof payload.nextPoiId === 'number') this.uiState.nextPoiId = payload.nextPoiId;
-      if (payload.horizonLength) this.uiState.horizonLength = payload.horizonLength;
-      if (payload.daytime) this.uiState.daytime = payload.daytime;
-      if (typeof payload.viewLocked === 'boolean') this.uiState.viewLocked = payload.viewLocked;
-      if (rerender && this.rendered) this.render();
-    } finally {
-      this._applyingRemote = false;
+    if (Array.isArray(payload.layers) && payload.layers.length) {
+      payload.layers.forEach((saved, i) => {
+        const layer = this.layerConfig[i];
+        if (!layer || !saved) return;
+        Object.assign(layer, saved);
+        // The incoming payload never carries customImage/customImageDims
+        // (see _buildHorizonConfigPayload) — if this layer's customImageRaw
+        // just came back empty (the GM cleared the image remotely),
+        // Object.assign alone won't null out the locally-cached derived
+        // bitmap from before, so that has to be done explicitly here.
+        if (!layer.customImageRaw) {
+          layer.customImage = null;
+          layer.customImageDims = null;
+          layer._processedFromRaw = null;
+        }
+      });
     }
+    if (Array.isArray(payload.pois)) this.uiState.pois = payload.pois.map(p => ({ ...p }));
+    if (typeof payload.nextPoiId === 'number') this.uiState.nextPoiId = payload.nextPoiId;
+    if (payload.horizonLength) this.uiState.horizonLength = payload.horizonLength;
+    if (payload.daytime) this.uiState.daytime = payload.daytime;
+    if (typeof payload.viewLocked === 'boolean') this.uiState.viewLocked = payload.viewLocked;
+    // Any layer whose customImageRaw is now set but has no matching derived
+    // customImage (a fresh upload from another client, or a payload that
+    // never carried the derived bitmap in the first place) needs that
+    // rebuilt locally before it's safe to paint — see _resolveLayerImages.
+    // Returned as a promise so boot() can await the full apply (merge +
+    // image rebuild) before doing its own pass for the no-payload case.
+    return new Promise(resolve => {
+      this._resolveLayerImages(() => {
+        this._applyingRemote = false;
+        if (rerender && this.rendered) this.render();
+        resolve();
+      });
+    });
   }
   _loadHorizonConfigForActiveScene(opts){
     const scene = this._activeScene();
     const payload = scene?.getFlag(MODULE_ID, 'horizonConfig');
-    if (payload) this._applyHorizonConfigPayload(payload, opts);
+    if (payload) return this._applyHorizonConfigPayload(payload, opts);
+    return Promise.resolve();
   }
 
   /* ---- Palette sync: the GM's palette pushes as an initial/updated
@@ -1710,26 +1824,46 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   /* ---------------- Boot ---------------- */
-  // Any layer whose starting biome is a built-in image preset (e.g. the
-  // default Forest layer) needs that image resolved through the canvas
-  // pipeline BEFORE the first render, since layer.customImage starts null.
-  _preloadBuiltinImages(cb){
-    const pending = this.layerConfig.filter(l => l.biome && l.biome.startsWith('img:') && !l.customImage);
+  // Rebuilds the DERIVED image bitmaps (layer.customImage/customImageDims —
+  // mirror-tiled and/or tint-baked via processCustomImage) from each
+  // layer's lightweight customImageRaw source. Needed in two cases:
+  //   1. A layer whose starting biome is a built-in image preset (e.g. the
+  //      default Forest layer) has no customImageRaw yet at all — one gets
+  //      assigned from BUILTIN_LAYER_IMAGES first, same as any other source.
+  //   2. A layer whose customImageRaw came from a loaded/synced payload
+  //      (a GM's own save, or another client's push) but whose derived
+  //      customImage is stale or missing — payloads never carry the derived
+  //      fields (see _buildHorizonConfigPayload), only the source path, so
+  //      this is what turns that source back into a paintable bitmap.
+  // _processedFromRaw is the local-only marker for "already resolved from
+  // this exact raw value" — it's what lets this run again after every load
+  // without needlessly reprocessing every layer that hasn't actually changed.
+  _resolveLayerImages(cb){
+    const pending = this.layerConfig.filter(l => {
+      const needsBuiltin = l.biome && l.biome.startsWith('img:') && !l.customImageRaw;
+      const needsReprocess = l.customImageRaw && l._processedFromRaw !== l.customImageRaw;
+      return needsBuiltin || needsReprocess;
+    });
     if (!pending.length) { cb(); return; }
     let remaining = pending.length;
     const done = () => { remaining--; if (remaining <= 0) cb(); };
     pending.forEach(layer => {
-      const key = layer.biome.slice(4);
-      const preset = BUILTIN_LAYER_IMAGES.forest.find(b => b.key === key);
-      if (!preset) { done(); return; }
-      layer.customImageRaw = preset.src;
-      layer.customImageName = game.i18n.localize(preset.labelKey);
-      layer.mirrorTile = true;
-      layer.tintToColor = true;
-      layer.customImageBuiltin = true;
+      if (layer.biome && layer.biome.startsWith('img:') && !layer.customImageRaw) {
+        const key = layer.biome.slice(4);
+        const preset = BUILTIN_LAYER_IMAGES.forest.find(b => b.key === key);
+        if (preset) {
+          layer.customImageRaw = preset.src;
+          layer.customImageName = game.i18n.localize(preset.labelKey);
+          layer.mirrorTile = true;
+          layer.tintToColor = true;
+          layer.customImageBuiltin = true;
+        }
+      }
+      if (!layer.customImageRaw) { done(); return; }
       processCustomImage(layer, (finalUrl, dims) => {
         layer.customImage = finalUrl;
         layer.customImageDims = dims;
+        layer._processedFromRaw = layer.customImageRaw;
         done();
       });
     });
@@ -1740,9 +1874,12 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // Pull in this scene's saved setup (if any) before the very first
     // paint, so players and a reconnecting GM see the real thing straight
     // away instead of the shipped defaults flashing first.
-    this._loadHorizonConfigForActiveScene({ rerender: false });
+    await this._loadHorizonConfigForActiveScene({ rerender: false });
     this._loadPushedPaletteForActiveScene();
-    await new Promise(resolve => this._preloadBuiltinImages(resolve));
+    // Also covers the no-saved-payload case (a scene with no horizonConfig
+    // flag yet) — _loadHorizonConfigForActiveScene above is then a no-op,
+    // so built-in preset layers still need their first resolve pass here.
+    await new Promise(resolve => this._resolveLayerImages(resolve));
     await this.render({ force: true });
   }
 }

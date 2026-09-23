@@ -26,15 +26,15 @@
   <h3>{{localize "SHRIMPSDH.Settings.Palette.Heading"}}</h3>
   <div class="setting-sub">
     <select id="opt-palette" data-action="changePalette">
-      <option value="obsidian" {{#eq palette "obsidian"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Obsidian"}}</option>
-      <option value="verdant" {{#eq palette "verdant"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Verdant"}}</option>
-      <option value="crimson" {{#eq palette "crimson"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Crimson"}}</option>
-      <option value="arcane" {{#eq palette "arcane"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Arcane"}}</option>
-      <option value="ancient" {{#eq palette "ancient"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Ancient"}}</option>
-      <option value="desert" {{#eq palette "desert"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Desert"}}</option>
-      <option value="hellscape" {{#eq palette "hellscape"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Hellscape"}}</option>
-      <option value="shadow" {{#eq palette "shadow"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Shadow"}}</option>
-      <option value="fey" {{#eq palette "fey"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Fey"}}</option>
+      <option value="obsidian" {{#if (eq palette "obsidian")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Obsidian"}}</option>
+      <option value="verdant" {{#if (eq palette "verdant")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Verdant"}}</option>
+      <option value="crimson" {{#if (eq palette "crimson")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Crimson"}}</option>
+      <option value="arcane" {{#if (eq palette "arcane")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Arcane"}}</option>
+      <option value="ancient" {{#if (eq palette "ancient")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Ancient"}}</option>
+      <option value="desert" {{#if (eq palette "desert")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Desert"}}</option>
+      <option value="hellscape" {{#if (eq palette "hellscape")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Hellscape"}}</option>
+      <option value="shadow" {{#if (eq palette "shadow")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Shadow"}}</option>
+      <option value="fey" {{#if (eq palette "fey")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Palette.Fey"}}</option>
     </select>
   </div>
   {{#if isGM}}
@@ -52,9 +52,9 @@
     <h3>{{localize "SHRIMPSDH.Settings.HorizonLength.Heading"}}</h3>
     <div class="setting-sub">
       <select id="opt-horizon-length" data-action="changeHorizonLength">
-        <option value="far" {{#eq horizonLength "far"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Far"}}</option>
-        <option value="medium" {{#eq horizonLength "medium"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Medium"}}</option>
-        <option value="close" {{#eq horizonLength "close"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Close"}}</option>
+        <option value="far" {{#if (eq horizonLength "far")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Far"}}</option>
+        <option value="medium" {{#if (eq horizonLength "medium")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Medium"}}</option>
+        <option value="close" {{#if (eq horizonLength "close")}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Close"}}</option>
       </select>
     </div>
     <div class="setting-note" id="horizon-length-desc">{{horizonLengthDesc}}</div>
