@@ -2,8 +2,22 @@
       because window.frame:false — see distant-horizons.js for why). Structure/ids
       are kept 1:1 with the pre-ApplicationV2 markup so styles/distant-horizons.css
       needs no rework, and so the GM-only-visibility / CSS-scoping fixes already
-      shipped keep applying unchanged. --}}
+      shipped keep applying unchanged.
 
+      Foundry requires every PART's rendered template to be a SINGLE root HTML
+      element (ApplicationV2 uses that one element as the part's own mount node);
+      the pre-ApplicationV2 markup below was several top-level sibling divs, which
+      throws "Template part must render a single HTML element" the instant the app
+      tries to render. Everything is wrapped in one outer #dh-window-part div here
+      to satisfy that; styles/distant-horizons.css has a matching
+      `#dh-window-part{ display:contents }` rule so this wrapper stays invisible
+      to layout and #dh-titlebar/#horizon-wrap/#controls/#dh-resize-handle keep
+      acting as direct flex children of #dh-window. Scoped to this one id rather
+      than a blanket "any div child of #dh-window" rule, since #dh-settings and
+      #layers-info-popup are also bare div PARTS under #dh-window and must NOT
+      be collapsed. --}}
+
+<div id="dh-window-part">
 <div id="dh-free-dock-handle" title="Drag to reposition — this browser only">
   <span></span><span></span><span></span>
 </div>
@@ -105,3 +119,4 @@
 {{/if}}
 
 <div id="dh-resize-handle" title="Drag to resize — this is the minimum size"></div>
+</div>

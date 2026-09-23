@@ -110,16 +110,26 @@
     overflow:hidden;
     margin:0; padding:0;
   }
-  /* ApplicationV2 (this app is window.frame:false, but PARTS still each
-     render into their own wrapper <div>, one per static PARTS entry —
-     "window"/"settings"/"layersInfo" — as a direct child of #dh-window.
-     Collapsing that wrapper with display:contents keeps the flex-column
-     layout below (#dh-window > #dh-titlebar / #horizon-wrap / #controls /
+  /* ApplicationV2 (this app is window.frame:false) requires each PART's
+     template to render a single root HTML element, so templates/window.hbs
+     wraps its whole markup in one outer <div id="dh-window-part">, which
+     becomes a direct child of #dh-window. Collapsing *that specific*
+     wrapper with display:contents keeps the flex-column layout below
+     (#dh-window > #dh-titlebar / #horizon-wrap / #controls /
      #dh-resize-handle) working exactly as it did when those were literal
-     direct children with no ApplicationV2 involved. The settings/info
-     popups are position:fixed and unaffected either way — an ancestor's
-     display:contents doesn't establish a containing block. */
-  #dh-window > div{ display:contents; }
+     direct children with no ApplicationV2 involved.
+     Deliberately scoped to #dh-window-part by id rather than a blanket
+     "#dh-window > div" selector: #dh-settings and #layers-info-popup
+     (the settings/info PARTS) are ALSO bare <div> children of #dh-window,
+     and a blanket selector would collapse them too — display:contents
+     removes an element's own box entirely, which breaks their
+     position:fixed popup box (no background/border/fixed positioning
+     left to render) the moment they're shown. Those two already carry
+     their own higher-specificity #id-based display rules for their
+     hidden/visible states, but a same-specificity-class blanket div
+     selector can still beat a lower-specificity one of theirs — scoping
+     to one exact id sidesteps the whole question. */
+  #dh-window-part{ display:contents; }
 
   #dh-titlebar{
     flex:0 0 auto;
