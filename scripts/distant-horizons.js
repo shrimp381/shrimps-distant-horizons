@@ -3,229 +3,43 @@
  * A parallax horizon + points-of-interest overlay for the Foundry VTT
  * scene view.
  *
- * STATUS: v0.1.0 — UI/interaction prototype. This first release ports the
- * artifact prototype's window, controls and rendering logic into the
- * module as-is; it is not yet wired to real Foundry scene/canvas data
- * (layer terrain is pre-populated with sensible defaults, ready to edit;
- * Points of Interest start empty — the GM adds their own via "+ Add POI").
- * None of it is read from or saved to the actual scene yet. See the
- * README's Roadmap section for what's planned next.
+ * v1.0.1 — ported to ApplicationV2 + HandlebarsApplicationMixin (Foundry's
+ * modern application framework) and fully localized via game.i18n. See
+ * lang/en.json for every user-facing string and templates/*.hbs for the
+ * markup. Functionally unchanged from the previous release: same window,
+ * same controls, same per-scene persistence and GM->player sync, same
+ * GM-only permission gate and the same CSS scoping under
+ * #shrimp-distant-horizons-root.
  */
 
 const MODULE_ID = 'shrimps-distant-horizons';
 const MODULE_BASE = `modules/${MODULE_ID}/`;
+const TEMPLATE_BASE = `${MODULE_BASE}templates/`;
 
-// The window's markup, ported from the prototype almost unchanged — the
-// only removal is the prototype's own mock battlemap backdrop (#stage),
-// which stood in for the real VTT canvas when the UI was being tested on
-// its own; inside Foundry the real canvas is already there, so injecting
-// a fake one on top of it would just hide the game.
-const DISTANT_HORIZONS_MARKUP = `
+const ICONS = {
+  lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>`,
+  unlock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 7.4-2.1"></path></svg>`,
+  trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path><path d="M6 7l1 13h10l1-13"></path></svg>`,
+  upload: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"></path><path d="M6 10l6-6 6 6"></path><path d="M4 20h16"></path></svg>`,
+  clear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>`,
+  eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C4.5 7 8 4.5 12 4.5S19.5 7 22 12c-2.5 5-6 7.5-10 7.5S4.5 17 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+  sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.6M12 19.4V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.6M19.4 12H22M4.2 19.8L6 18M18 6l1.8-1.8"></path></svg>`,
+  moon: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 1 0 10.5 10.5Z"></path></svg>`,
+  sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"></circle><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"></circle><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none"></circle></svg>`,
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"></path></svg>`
+};
 
-<div id="dh-window">
+const STORAGE = {
+  layersUpload: 'worlds/<world-id>/distant-horizons/layers/',
+  poisUpload: 'worlds/<world-id>/distant-horizons/pois/'
+};
 
-  <div id="dh-free-dock-handle" title="Drag to reposition — this browser only">
-    <span></span><span></span><span></span>
-  </div>
-
-  <div id="dh-titlebar">
-    <div id="dh-draghandle">
-      <span id="dh-logo" aria-hidden="true"></span>
-      <div style="display:flex; flex-direction:column; line-height:1.15; min-width:0;">
-        <span id="dh-title">Distant Horizons</span>
-        <span id="dh-subtitle" class="mono">GM view · double-click to dock</span>
-      </div>
-    </div>
-
-    <div class="segmented" id="view-toggle">
-      <button data-mode="gm" class="active">GM</button>
-      <button data-mode="player">Player</button>
-    </div>
-
-    <div class="segmented icon-segmented" id="daytime-toggle">
-      <button data-time="day" class="active" title="Day"></button>
-      <button data-time="night" title="Night"></button>
-    </div>
-
-    <button class="cog-btn" id="lock-view-btn" title="Lock view (stop players scrolling)" aria-label="Lock view"></button>
-
-    <button class="cog-btn" id="cog-btn" title="Settings" aria-label="Settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"></circle>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-      </svg>
-    </button>
-  </div>
-
-  <div id="horizon-wrap">
-    <div id="horizon-view">
-      <div id="layers-container" style="position:absolute; inset:0;"></div>
-      <div id="vignette"></div>
-      <div id="layer-hud" class="hud"><b id="layer-count-text">6</b>/6 layers</div>
-
-      <span id="drag-hint">← drag to scan · drag a POI to place it →</span>
-    </div>
-    <div id="compass-hud" class="hud">
-      <span id="compass-text">N 0°</span>
-    </div>
-  </div>
-
-  <div id="controls">
-
-    <div id="panel-layers" class="panel">
-      <h2>
-        <span style="display:inline-flex; align-items:center; gap:5px;">
-          Layers
-          <button class="info-btn" id="layers-info-btn" title="Custom image guidance" aria-label="Custom image guidance">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="11" x2="12" y2="16.5"></line><circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none"></circle></svg>
-          </button>
-        </span>
-        <span class="label" style="font-weight:400;">toggle · X/Y · image</span>
-      </h2>
-      <div class="quick-apply">
-        <select id="quick-biome-select"></select>
-        <button class="btn" id="quick-biome-apply">Apply&nbsp;all</button>
-      </div>
-      <div id="layer-rows"></div>
-    </div>
-
-    <div id="panel-pois" class="panel">
-      <h2>
-        Points of Interest
-        <button class="btn" id="add-poi-btn">+ Add POI</button>
-      </h2>
-      <div id="poi-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:27%;">Name</th>
-              <th style="width:26%;">Icon</th>
-              <th style="width:10%;">Layer</th>
-              <th style="width:7%;">Size</th>
-              <th style="width:18%;">State</th>
-              <th style="width:12%; text-align:right;">—</th>
-            </tr>
-          </thead>
-          <tbody id="poi-list"></tbody>
-        </table>
-      </div>
-    </div>
-
-  </div>
-
-  <div id="dh-resize-handle" title="Drag to resize — this is the minimum size"></div>
-</div>
-
-<div id="layers-info-popup" class="info-popup" hidden>
-  <h4>Custom Layer Images</h4>
-  <p>Recommended: a wide, short PNG (transparent background) drawn as a horizon silhouette — around <code>2400×400px</code> to <code>3600×600px</code>, roughly 6:1 wide. It's stretched to fill the layer's height and tiled sideways, so keep the important shapes clear of the very top/bottom edges.</p>
-  <p><strong>Seamless tiling</strong> — when the image's left and right edges don't already line up, turn on <em>Seamless mirror tiling</em> next to the upload (on by default). It mirrors the image and tiles <code>[image][flipped copy]</code> alternately — that guarantees a perfect, jump-free loop for any image, at the cost of every other tile appearing mirrored.</p>
-  <p>Prefer a true unbroken loop with no mirroring? Author the source image so its leftmost and rightmost columns already match, then turn tiling off.</p>
-  <p><strong>Solid base</strong> — layers can be dragged vertically, which opens a gap beneath artwork that doesn't already reach the bottom edge. For best results, draw your image with a flat, solid-colour base near the bottom (like the bundled Forest presets). If you don't, the module will only fill the exact gap your drag creates, straight down from wherever your art already stops — it won't guess a shape for you, so any hole left by incomplete artwork is yours to fix in the source image.</p>
-</div>
-
-<div id="dh-settings" hidden>
-  <h3>Compass</h3>
-  <div class="setting-sub">
-    <select id="opt-compass-mode">
-      <option value="full" selected>Full — cardinal + degrees</option>
-      <option value="simple">Simple — cardinal only</option>
-      <option value="off">Hidden</option>
-    </select>
-  </div>
-  <div class="setting-sub" id="compass-opacity-row">
-    <span class="label">Compass opacity</span>
-    <input type="range" id="opt-compass-opacity" min="20" max="100" value="80">
-  </div>
-  <div class="gm-only">
-    <div class="setting-row">
-      <label for="opt-draghint">Show drag hint</label>
-      <input type="checkbox" id="opt-draghint" checked>
-    </div>
-  </div>
-  <hr>
-  <h3>Palette</h3>
-  <div class="setting-sub">
-    <select id="opt-palette">
-      <option value="obsidian">Obsidian &amp; Brass</option>
-      <option value="verdant">Verdant Camp</option>
-      <option value="crimson">Crimson Watch</option>
-      <option value="arcane">Arcane Violet</option>
-      <option value="ancient">Ancient Parchment</option>
-      <option value="desert">Desert Sands</option>
-      <option value="hellscape">Hellscape</option>
-      <option value="shadow">Shadow</option>
-      <option value="fey">Feywild</option>
-    </select>
-  </div>
-  <div class="gm-only">
-    <hr>
-    <h3>POI Icons</h3>
-    <div class="setting-row">
-      <label for="opt-fullcolour">Full-colour icons</label>
-      <input type="checkbox" id="opt-fullcolour">
-    </div>
-    <div class="setting-note">Off (default): icons tint to their layer's colour. On: icons render in their own colours or, for uploads, the original image.</div>
-  </div>
-  <div class="gm-only">
-    <hr>
-    <h3>Horizon Length</h3>
-    <div class="setting-sub">
-      <select id="opt-horizon-length">
-        <option value="far" selected>Far</option>
-        <option value="medium">Medium</option>
-        <option value="close">Close</option>
-      </select>
-    </div>
-    <div class="setting-note" id="horizon-length-desc">Full-length horizon — more dragging to scan the whole view.</div>
-  </div>
-  <div class="gm-only">
-    <hr>
-    <h3>Docking</h3>
-    <div class="setting-row">
-      <label for="opt-free-dock">Free Dock</label>
-      <input type="checkbox" id="opt-free-dock">
-    </div>
-    <div class="setting-note">When docked, drag the small handle above the strip to move it anywhere on your own screen instead of the auto-centred position. This is per-browser — it isn't shared with other players.</div>
-  </div>
-  <div class="gm-only">
-    <hr>
-    <h3>Window</h3>
-    <button class="btn" id="dh-reset-btn">Reset position</button>
-  </div>
-</div>
-`;
-
-function injectDistantHorizonsMarkup(){
-  if (document.getElementById('dh-window')) return; // already injected
-  const holder = document.createElement('div');
-  holder.id = 'shrimp-distant-horizons-root';
-  holder.innerHTML = DISTANT_HORIZONS_MARKUP;
-  document.body.appendChild(holder);
-}
-
-function initDistantHorizonsUI(){
-  "use strict";
-
-  const ICONS = {
-    lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>`,
-    unlock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 7.4-2.1"></path></svg>`,
-    trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path><path d="M6 7l1 13h10l1-13"></path></svg>`,
-    upload: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"></path><path d="M6 10l6-6 6 6"></path><path d="M4 20h16"></path></svg>`,
-    clear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>`,
-    eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12C4.5 7 8 4.5 12 4.5S19.5 7 22 12c-2.5 5-6 7.5-10 7.5S4.5 17 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
-    sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.6M12 19.4V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.6M19.4 12H22M4.2 19.8L6 18M18 6l1.8-1.8"></path></svg>`,
-    moon: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 1 0 10.5 10.5Z"></path></svg>`,
-    sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"></circle><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"></circle><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none"></circle></svg>`,
-    check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"></path></svg>`
-  };
-
-  const STORAGE = {
-    layersUpload: 'worlds/<world-id>/distant-horizons/layers/',
-    poisUpload: 'worlds/<world-id>/distant-horizons/pois/'
-  };
-
-  const layerConfig = [
+/* ---------------- Default per-instance state factories ---------------- */
+// Fresh copies per app instance (rather than module-scope mutable objects,
+// as the pre-ApplicationV2 version used) so a closed-then-reopened window
+// never accidentally shares state with a stale prior instance.
+function defaultLayerConfig(){
+  return [
     { id:1, color:"#0b0e14", speed:1.0,  baseZ:60, scale:1.0, enabled:true, biome:"mountains-1", yOffset:0, xOffset:0, customImage:null, customImageName:null, customImageRaw:null, mirrorTile:true, tintToColor:true, imageSettingsOpen:false, customImageBuiltin:false },
     { id:2, color:"#232a3d", speed:0.8,  baseZ:50, scale:0.9, enabled:true, biome:"mountains-2", yOffset:0, xOffset:0, customImage:null, customImageName:null, customImageRaw:null, mirrorTile:true, tintToColor:true, imageSettingsOpen:false, customImageBuiltin:false },
     { id:3, color:"#3d4863", speed:0.6,  baseZ:40, scale:0.8, enabled:true, biome:"img:forest-1", yOffset:0, xOffset:0, customImage:null, customImageName:null, customImageRaw:null, mirrorTile:true, tintToColor:true, imageSettingsOpen:false, customImageBuiltin:false },
@@ -233,352 +47,1017 @@ function initDistantHorizonsUI(){
     { id:5, color:"#8b96ac", speed:0.2,  baseZ:20, scale:0.6, enabled:true, biome:"mountains-3",  yOffset:0, xOffset:0, customImage:null, customImageName:null, customImageRaw:null, mirrorTile:true, tintToColor:true, imageSettingsOpen:false, customImageBuiltin:false },
     { id:6, color:"#c7cedb", speed:0.05, baseZ:10, scale:0.5, enabled:true, biome:"mountains-1",  yOffset:0, xOffset:0, customImage:null, customImageName:null, customImageRaw:null, mirrorTile:true, tintToColor:true, imageSettingsOpen:false, customImageBuiltin:false },
   ];
+}
 
-  // Terrain shading ramp (foreground → farthest) per colour palette, so the
-  // layers themselves re-tint when the GM switches palette in settings.
-  const LAYER_PALETTES = {
-    obsidian:  ["#0b0e14","#232a3d","#3d4863","#5c6a89","#8b96ac","#c7cedb"],
-    verdant:   ["#0a140d","#173321","#254a30","#3a6a45","#5e8f68","#a8c9a0"],
-    crimson:   ["#150a0c","#331419","#4d1f26","#6e2c35","#9c4a52","#d6a2a8"],
-    arcane:    ["#0d0b16","#211a3a","#332a5c","#4a3e82","#6f5fb0","#b3a6e6"],
-    ancient:   ["#2a1c0f","#4a3220","#6e4f32","#93714a","#b89a6e","#dcc9a0"],
-    desert:    ["#241408","#4a2c12","#6e4318","#9c6624","#c9903c","#f0c878"],
-    hellscape: ["#0a0605","#2a0f0a","#4d1810","#7a2415","#b03a1a","#e86a2a"],
-    shadow:    ["#08090b","#181b1f","#2a2e34","#454b53","#6b7278","#a8b0b8"],
-    fey:       ["#0a0f1c","#1a2440","#2a3866","#3f5a92","#5f8ab8","#a8d4d8"],
-  };
-  function applyLayerPaletteColors(paletteName){
-    const ramp = LAYER_PALETTES[paletteName] || LAYER_PALETTES.obsidian;
-    layerConfig.forEach((layer, i) => { layer.color = ramp[i] || layer.color; });
-  }
+// Terrain shading ramp (foreground -> farthest) per colour palette, so the
+// layers themselves re-tint when the GM switches palette in settings.
+const LAYER_PALETTES = {
+  obsidian:  ["#0b0e14","#232a3d","#3d4863","#5c6a89","#8b96ac","#c7cedb"],
+  verdant:   ["#0a140d","#173321","#254a30","#3a6a45","#5e8f68","#a8c9a0"],
+  crimson:   ["#150a0c","#331419","#4d1f26","#6e2c35","#9c4a52","#d6a2a8"],
+  arcane:    ["#0d0b16","#211a3a","#332a5c","#4a3e82","#6f5fb0","#b3a6e6"],
+  ancient:   ["#2a1c0f","#4a3220","#6e4f32","#93714a","#b89a6e","#dcc9a0"],
+  desert:    ["#241408","#4a2c12","#6e4318","#9c6624","#c9903c","#f0c878"],
+  hellscape: ["#0a0605","#2a0f0a","#4d1810","#7a2415","#b03a1a","#e86a2a"],
+  shadow:    ["#08090b","#181b1f","#2a2e34","#454b53","#6b7278","#a8b0b8"],
+  fey:       ["#0a0f1c","#1a2440","#2a3866","#3f5a92","#5f8ab8","#a8d4d8"],
+};
+function applyLayerPaletteColors(layerConfig, paletteName){
+  const ramp = LAYER_PALETTES[paletteName] || LAYER_PALETTES.obsidian;
+  layerConfig.forEach((layer, i) => { layer.color = ramp[i] || layer.color; });
+}
 
-  /* ---------------- Biomes: 3 procedural families × 3 numbered variants,
-     plus Forest, which is entirely the two hand-drawn images below. ---------------- */
-  const BIOME_FAMILIES = [
-    { key:'mountains', label:'Mountains', singular:'Mountain' },
-    { key:'hills',     label:'Hills',     singular:'Hill' },
-    { key:'desert',    label:'Desert',    singular:'Desert' },
-  ];
-  const VARIANT_PARAMS = {
-    1: { seedMul:1.0, seedAdd:0,   ampMul:1.0  },
-    2: { seedMul:1.6, seedAdd:57,  ampMul:1.18 },
-    3: { seedMul:2.3, seedAdd:113, ampMul:0.82 },
-  };
-  // Forest has no procedural generator — it's just these two hand-drawn
-  // images (value prefixed "img:"). Picking one sets the layer's custom
-  // image straight from the bundled asset, still going through the
-  // mirror-tile / tint-to-colour pipeline like a manual upload.
-  const BUILTIN_LAYER_IMAGES = {
-    forest: [
-      { key:'forest-1', label:'Forest 1', src: MODULE_BASE + 'assets/forest-hand-1.png' },
-      { key:'forest-2', label:'Forest 2', src: MODULE_BASE + 'assets/forest-hand-2.png' },
-    ],
-  };
-  function biomeOptionsHtml(selected){
-    const proceduralHtml = BIOME_FAMILIES.map(fam => {
-      const opts = [1,2,3].map(v => {
-        const val = `${fam.key}-${v}`;
-        return `<option value="${val}" ${val===selected?'selected':''}>${fam.singular} ${v}</option>`;
-      }).join('');
-      return `<optgroup label="${fam.label}">${opts}</optgroup>`;
+/* ---------------- Biomes: 3 procedural families x 3 numbered variants,
+   plus Forest, which is entirely the two hand-drawn images below. ---------------- */
+const BIOME_FAMILIES = [
+  { key:'mountains', labelKey:'SHRIMPSDH.Biome.MountainsFamily', singularKey:'SHRIMPSDH.Biome.MountainSingular' },
+  { key:'hills',     labelKey:'SHRIMPSDH.Biome.HillsFamily',     singularKey:'SHRIMPSDH.Biome.HillSingular' },
+  { key:'desert',    labelKey:'SHRIMPSDH.Biome.DesertFamily',    singularKey:'SHRIMPSDH.Biome.DesertSingular' },
+];
+const VARIANT_PARAMS = {
+  1: { seedMul:1.0, seedAdd:0,   ampMul:1.0  },
+  2: { seedMul:1.6, seedAdd:57,  ampMul:1.18 },
+  3: { seedMul:2.3, seedAdd:113, ampMul:0.82 },
+};
+// Forest has no procedural generator — it's just these two hand-drawn
+// images (value prefixed "img:"). Picking one sets the layer's custom
+// image straight from the bundled asset, still going through the
+// mirror-tile / tint-to-colour pipeline like a manual upload.
+const BUILTIN_LAYER_IMAGES = {
+  forest: [
+    { key:'forest-1', labelKey:'SHRIMPSDH.Biome.Forest1', src: MODULE_BASE + 'assets/forest-hand-1.png' },
+    { key:'forest-2', labelKey:'SHRIMPSDH.Biome.Forest2', src: MODULE_BASE + 'assets/forest-hand-2.png' },
+  ],
+};
+function biomeOptionsHtml(selected){
+  const proceduralHtml = BIOME_FAMILIES.map(fam => {
+    const opts = [1,2,3].map(v => {
+      const val = `${fam.key}-${v}`;
+      const label = game.i18n.format('SHRIMPSDH.Biome.NumberedLabel', { label: game.i18n.localize(fam.singularKey), n: v });
+      return `<option value="${val}" ${val===selected?'selected':''}>${label}</option>`;
     }).join('');
-    const forestOpts = BUILTIN_LAYER_IMAGES.forest
-      .map(b => `<option value="img:${b.key}" ${('img:'+b.key)===selected?'selected':''}>${b.label}</option>`).join('');
-    return proceduralHtml + `<optgroup label="Forest">${forestOpts}</optgroup>`;
+    return `<optgroup label="${game.i18n.localize(fam.labelKey)}">${opts}</optgroup>`;
+  }).join('');
+  const forestOpts = BUILTIN_LAYER_IMAGES.forest
+    .map(b => `<option value="img:${b.key}" ${('img:'+b.key)===selected?'selected':''}>${game.i18n.localize(b.labelKey)}</option>`).join('');
+  return proceduralHtml + `<optgroup label="${game.i18n.localize('SHRIMPSDH.Biome.ForestGroup')}">${forestOpts}</optgroup>`;
+}
+
+const ICON_LABEL_KEYS = {
+  tower:'SHRIMPSDH.POI.Icon.Tower', mine:'SHRIMPSDH.POI.Icon.Mine', cave:'SHRIMPSDH.POI.Icon.Cave',
+  camp:'SHRIMPSDH.POI.Icon.Camp', ruins:'SHRIMPSDH.POI.Icon.Ruins', bridge:'SHRIMPSDH.POI.Icon.Bridge',
+  danger:'SHRIMPSDH.POI.Icon.Danger', village:'SHRIMPSDH.POI.Icon.Village', tree:'SHRIMPSDH.POI.Icon.Tree',
+  water:'SHRIMPSDH.POI.Icon.Water'
+};
+const ICON_FULLCOLOUR = {
+  tower:'#9aa1ad', mine:'#7a5236', cave:'#2b2f38', camp:'#d1793f', ruins:'#ab9c80',
+  bridge:'#7f92a6', danger:'#b7402f', village:'#caa159', tree:'#4f7d4c', water:'#3f80a8'
+};
+const POI_ICON_DEFS = {
+  tower:  (f) => `<svg viewBox="0 0 60 100" width="100%" height="100%" fill="${f}"><path d="M10,100 L10,30 L0,30 L0,10 L15,10 L15,30 L25,30 L25,10 L40,10 L40,30 L30,30 L30,10 L45,10 L45,30 L60,30 L60,100 Z"/></svg>`,
+  mine:   (f) => `<svg viewBox="0 0 100 80" width="100%" height="100%" fill="${f}"><polygon points="10,80 30,20 70,20 90,80"/><path d="M40,80 L40,40 L60,40 L60,80 Z" fill="rgba(255,255,255,0.18)"/></svg>`,
+  cave:   (f) => `<svg viewBox="0 0 120 70" width="100%" height="100%" fill="${f}"><path d="M0,70 Q40,0 60,0 T120,70 Z"/><path d="M40,70 Q50,30 60,30 T80,70 Z" fill="rgba(255,255,255,0.18)"/></svg>`,
+  camp:   (f) => `<svg viewBox="0 0 100 80" width="100%" height="100%" fill="${f}"><path d="M50,8 L92,80 L8,80 Z"/><path d="M50,8 L64,80 L36,80 Z" fill="rgba(0,0,0,0.28)"/></svg>`,
+  ruins:  (f) => `<svg viewBox="0 0 60 100" width="100%" height="100%" fill="${f}"><rect x="10" y="6" width="12" height="18"/><rect x="18" y="26" width="24" height="58"/><rect x="8" y="84" width="44" height="10"/></svg>`,
+  bridge: (f) => `<svg viewBox="0 0 120 60" width="100%" height="100%" fill="${f}"><path d="M0,60 L0,40 Q60,-8 120,40 L120,60 Z"/><rect x="14" y="40" width="8" height="20"/><rect x="98" y="40" width="8" height="20"/></svg>`,
+  danger: (f) => `<svg viewBox="0 0 100 90" width="100%" height="100%" fill="${f}"><path d="M50,2 L98,88 L2,88 Z"/><rect x="45" y="30" width="10" height="30" fill="rgba(0,0,0,0.35)"/><rect x="45" y="66" width="10" height="10" fill="rgba(0,0,0,0.35)"/></svg>`,
+  village:(f) => `<svg viewBox="0 0 120 70" width="100%" height="100%" fill="${f}"><path d="M4,70 L4,44 L20,28 L36,44 L36,70 Z"/><path d="M44,70 L44,36 L66,16 L88,36 L88,70 Z"/><path d="M96,70 L96,46 L110,34 L120,46 L120,70 Z" opacity="0.9"/></svg>`,
+  tree:   (f) => `<svg viewBox="0 0 60 90" width="100%" height="100%" fill="${f}"><path d="M30,0 L50,35 L42,35 L58,60 L48,60 L60,90 L0,90 L12,60 L2,60 L18,35 L10,35 Z"/></svg>`,
+  water:  (f) => `<svg viewBox="0 0 120 60" width="100%" height="100%" fill="${f}"><path d="M0,28 Q15,12 30,28 T60,28 T90,28 T120,28 L120,60 L0,60 Z"/></svg>`
+};
+function poiIconOptionsHtml(selected){
+  return Object.keys(ICON_LABEL_KEYS).map(k =>
+    `<option value="${k}" ${k===selected?'selected':''}>${game.i18n.localize(ICON_LABEL_KEYS[k])}</option>`
+  ).join('');
+}
+
+/* ---------------- Procedural terrain generation (pure, unchanged) ---------------- */
+// Tile is 3x the old width so the repeat is far less obvious. Every
+// harmonic's frequency MUST be a whole number of cycles across the tile —
+// sin(2π·k·x/width) only lands on the same value at x=0 and x=width when
+// k is an integer, which is what makes the tile edges line up seamlessly
+// under background-repeat. Variety instead comes from each of the 3
+// numbered variants using its own distinct set of integer harmonics.
+const FREQ_SETS = {
+  mountains: { 1:[3,7,13,21,34], 2:[4,9,16,27,41], 3:[2,5,11,19,29] },
+  hills:     { 1:[2,5,9,15],     2:[3,7,12,20],     3:[1,4,8,14]     },
+  desert:    { 1:[2,4,7],        2:[3,6,10],        3:[1,3,6]        },
+};
+const PHASES = [0, 1.7, 3.9, 0.6, 2.4, 5.0];
+
+// Small deterministic PRNG (mulberry32) — same integer seed always
+// produces the same sequence, so a given layer's jagged peak layout
+// (Mountain 1) stays fixed across re-renders instead of reshuffling
+// every time initLayers() runs.
+function mulberry32(seed){
+  let t = seed >>> 0;
+  return function(){
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), t | 1);
+    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateBiomePath(biomeFull, layerIdx){
+  const [family, variantStr] = biomeFull.split('-');
+  const variant = parseInt(variantStr, 10) || 1;
+  const vp = VARIANT_PARAMS[variant] || VARIANT_PARAMS[1];
+  const width = 3600, height = 400;
+  const invertedIdx = 5 - layerIdx;
+  const baseY = 130 + (invertedIdx * 46);
+  let path = `M 0,${height} L 0,${baseY} `;
+  const seed = layerIdx * 123.45 * vp.seedMul + vp.seedAdd;
+
+  if (family === 'mountains' && variant === 1) {
+    // Mountain 1: a sharp, jagged alpine skyline rather than the
+    // smoother rolling profile variants 2/3 use. Summing several sine
+    // harmonics (as the other variants do) always washes back out to
+    // a rounded hump — sharp features at different frequencies land
+    // at different x positions and average each other away. A real
+    // jagged range instead reads as a few dominant angular peaks with
+    // straight rocky slopes, so this builds that directly: an
+    // envelope (max) of several triangular peaks — genuinely sharp,
+    // straight-edged points, not an averaged curve — plus a small
+    // sawtooth jitter riding on top for rugged edge detail. Peak
+    // placement wraps around the tile width so the seam stays exact.
+    const rng = mulberry32(Math.floor((seed + 1000) * 977));
+    const peakCount = 4 + Math.floor(rng() * 2); // 4–5 bold summits
+    const baseAmp = (92 + invertedIdx * 24) * vp.ampMul;
+    const peaks = [];
+    for (let i=0;i<peakCount;i++){
+      const px = ((i + 0.5) / peakCount) * width + (rng() - 0.5) * (width / peakCount) * 0.7;
+      const heightMul = 0.4 + Math.pow(rng(), 1.4) * 1.05; // a few short, one or two dramatic
+      const halfWidth = (width / peakCount) * (0.24 + rng() * 0.3); // narrow => steep, knife-edge slopes
+      peaks.push({ px: ((px % width) + width) % width, h: baseAmp * heightMul, hw: halfWidth });
+    }
+    const jitterFreqs = [19, 37, 61];
+    for (let x=0; x<=width; x+=6) {
+      let dy = 0;
+      for (const pk of peaks){
+        const d = Math.abs(x - pk.px);
+        const wrapD = Math.min(d, width - d);
+        const tri = Math.max(0, 1 - wrapD / pk.hw);
+        dy = Math.max(dy, tri * pk.h);
+      }
+      // Fine rocky jaggedness — sharp, low-amplitude cusps riding on
+      // the main envelope so it roughens slopes without smoothing
+      // out the peaks above.
+      let jitter = 0, jAmp = 17;
+      for (let i=0;i<jitterFreqs.length;i++){
+        jitter += (1 - Math.abs(Math.sin((x/width)*Math.PI*2*jitterFreqs[i] + seed*1.7 + i))) * jAmp;
+        jAmp *= 0.5;
+      }
+      dy += jitter;
+      path += `L ${x},${baseY-dy} `;
+    }
+  } else if (family === 'mountains') {
+    const freqs = FREQ_SETS.mountains[variant];
+    const amps=[(58+(invertedIdx*15))*vp.ampMul, 30*vp.ampMul, 17*vp.ampMul, 9*vp.ampMul, 5*vp.ampMul];
+    for (let x=0; x<=width; x+=10) {
+      let dy=0;
+      for (let i=0;i<freqs.length;i++) dy += Math.abs(Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i])) * amps[i];
+      path += `L ${x},${baseY-dy} `;
+    }
+  } else if (family === 'hills') {
+    const freqs = FREQ_SETS.hills[variant];
+    const amps=[44*vp.ampMul, 26*vp.ampMul, 14*vp.ampMul, 7*vp.ampMul];
+    for (let x=0; x<=width; x+=15) {
+      let dy=0;
+      for (let i=0;i<freqs.length;i++) dy += Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i]) * amps[i];
+      path += `L ${x},${baseY-dy} `;
+    }
+  } else if (family === 'desert') {
+    const freqs = FREQ_SETS.desert[variant];
+    const amps=[32*vp.ampMul, 17*vp.ampMul, 8*vp.ampMul];
+    for (let x=0; x<=width; x+=20) {
+      let dy=0;
+      for (let i=0;i<freqs.length;i++) dy += Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i]) * amps[i];
+      path += `L ${x},${baseY+44-dy} `;
+    }
+  }
+  // Forest has no procedural case — it's always one of the two
+  // hand-drawn images (BUILTIN_LAYER_IMAGES.forest), routed through the
+  // customImage path rather than generateBiomePath.
+  path += `L ${width},${baseY} L ${width},${height} Z`;
+  return path;
+}
+
+/* ---------------- Small DOM/file utilities (pure, unchanged) ---------------- */
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+function readImageFile(file, cb){
+  const reader = new FileReader();
+  reader.onload = () => cb(reader.result);
+  reader.readAsDataURL(file);
+}
+// Builds a [image][horizontally-flipped copy] tile on a canvas. Tiling
+// that doubled image with repeat-x is guaranteed seam-free for ANY
+// source image — the flip means every tile boundary lines up pixel-
+// for-pixel with its neighbour, at the cost of every other repeat
+// appearing mirrored.
+function buildMirrorTile(img, cb){
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) { cb(null, null); return; }
+  const canvas = document.createElement('canvas');
+  canvas.width = w * 2; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.save();
+  ctx.translate(w * 2, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(img, 0, 0, w, h);
+  ctx.restore();
+  cb(canvas.toDataURL('image/png'), { width: w * 2, height: h });
+}
+// Re-derives layer.customImage (what's actually painted) from
+// layer.customImageRaw (what was uploaded) + layer.mirrorTile. Also
+// reports the painted image's pixel dimensions via the callback's
+// second argument — needed to snap the CSS tile width to a whole
+// pixel so repeat-x tiling never lands on a fractional pixel and shows
+// a hairline seam at the repeat edge.
+function processCustomImage(layer, cb){
+  if (!layer.customImageRaw) { cb(null, null); return; }
+  const img = new Image();
+  img.onload = () => {
+    if (layer.mirrorTile) {
+      buildMirrorTile(img, cb);
+    } else {
+      cb(layer.customImageRaw, { width: img.naturalWidth, height: img.naturalHeight });
+    }
+  };
+  img.onerror = () => cb(layer.customImageRaw, null);
+  img.src = layer.customImageRaw;
+}
+
+const HORIZON_LENGTH_MUL = { far: 1.5, medium: 2.4, close: 3.6 };
+const HORIZON_LENGTH_DESC_KEYS = {
+  far: 'SHRIMPSDH.Settings.HorizonLength.DescFar',
+  medium: 'SHRIMPSDH.Settings.HorizonLength.DescMedium',
+  close: 'SHRIMPSDH.Settings.HorizonLength.DescClose'
+};
+const POI_STATE_ORDER = ['hidden','unknown','rumored','discovered'];
+const POI_STATE_LABEL_KEYS = {
+  hidden:'SHRIMPSDH.POI.State.Hidden', unknown:'SHRIMPSDH.POI.State.Unknown',
+  rumored:'SHRIMPSDH.POI.State.Rumored', discovered:'SHRIMPSDH.POI.State.Discovered'
+};
+const POI_SIZE_MUL = { small:0.45, medium:0.7, large:1.0 };
+
+/* ================================================================
+ * DistantHorizonsApp — the module's single floating window, now a
+ * proper ApplicationV2 + HandlebarsApplicationMixin class.
+ *
+ * Architecture notes (see README/PR notes for the fuller version):
+ *  - window.frame is deliberately false: every pixel of this window's
+ *    chrome (titlebar, segmented toggles, cog button, resize handle,
+ *    compact "docked strip" mode, Free Dock dragging) is bespoke, with
+ *    no analog in Foundry's own header/resize chrome, so there is
+ *    nothing to hand over to it. What IS handed to ApplicationV2: the
+ *    render/close lifecycle, PARTS + Handlebars templating,
+ *    `_prepareContext`, the `actions` click-delegation map, the
+ *    `foundry.applications.instances` singleton registry, and (for the
+ *    undocked window) position bookkeeping via `this.setPosition()`
+ *    instead of raw `element.style` writes.
+ *  - `_insertElement` is overridden so the app's root element still
+ *    lands inside the dedicated #shrimp-distant-horizons-root wrapper
+ *    div, preserving the CSS-scoping fix already shipped in
+ *    styles/distant-horizons.css (nothing there needed to change).
+ *  - The compact/docked strip and Free Dock remain fully hand-rolled
+ *    (custom class toggling + direct style/CSS-variable writes) per
+ *    the brief — they are not ApplicationV2 "window" concepts at all.
+ *  - Layer terrain + POI markers inside #layers-container are still
+ *    built with direct, imperative DOM writes (initLayers/renderPOIs/
+ *    updateVisuals) rather than Handlebars — that part is closer to a
+ *    per-frame canvas-ish render loop (parallax pan, live dragging)
+ *    than to templatable static markup, and stays that way on
+ *    purpose. Everything else (window chrome, settings panel, the
+ *    layer-rows/POI-table lists) is genuine Handlebars, driven by
+ *    `_prepareContext()` and re-rendered via `this.render()`.
+ * ================================================================ */
+const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
+
+// Seeds a freshly (re)opened window's pan position from wherever the
+// window last was, purely for UX continuity — this is NOT persisted
+// data (scrollX has never been part of the saved scene payload; a
+// scene's actual saved horizon is unaffected either way).
+let lastKnownScrollX = 500;
+
+class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
+  static DEFAULT_OPTIONS = {
+    id: 'dh-window',
+    tag: 'div',
+    classes: ['distant-horizons-window'],
+    window: { frame: false, positioned: true },
+    actions: {
+      toggleSettings: DistantHorizonsApp.#onToggleSettings,
+      toggleLayersInfo: DistantHorizonsApp.#onToggleLayersInfo,
+      setViewMode: DistantHorizonsApp.#onSetViewMode,
+      setDaytime: DistantHorizonsApp.#onSetDaytime,
+      toggleLockView: DistantHorizonsApp.#onToggleLockView,
+      addPoi: DistantHorizonsApp.#onAddPoi,
+      applyQuickBiome: DistantHorizonsApp.#onApplyQuickBiome,
+      resetWindowPosition: DistantHorizonsApp.#onResetWindowPosition,
+      toggleLayerEnabled: DistantHorizonsApp.#onToggleLayerEnabled,
+      toggleLayerMirrorTile: DistantHorizonsApp.#onToggleLayerMirrorTile,
+      toggleLayerTint: DistantHorizonsApp.#onToggleLayerTint,
+      triggerLayerUpload: DistantHorizonsApp.#onTriggerLayerUpload,
+      openLayerImageSettings: DistantHorizonsApp.#onOpenLayerImageSettings,
+      clearLayerImage: DistantHorizonsApp.#onClearLayerImage,
+      applyLayerImageSettings: DistantHorizonsApp.#onApplyLayerImageSettings,
+      triggerPoiIconUpload: DistantHorizonsApp.#onTriggerPoiIconUpload,
+      clearPoiIcon: DistantHorizonsApp.#onClearPoiIcon,
+      focusPoi: DistantHorizonsApp.#onFocusPoi,
+      togglePoiLock: DistantHorizonsApp.#onTogglePoiLock,
+      deletePoi: DistantHorizonsApp.#onDeletePoi
+    }
+  };
+
+  static PARTS = {
+    window:      { template: `${TEMPLATE_BASE}window.hbs` },
+    settings:    { template: `${TEMPLATE_BASE}settings.hbs` },
+    layersInfo:  { template: `${TEMPLATE_BASE}layers-info.hbs` }
+  };
+
+  constructor(options={}){
+    super(options);
+
+    // Foundry's own real permission flag — not the mutable state.viewMode
+    // a click can flip. See _prepareContext()'s `showGmControls` for
+    // where this is enforced: state.viewMode's *default* below is just
+    // the starting look, it is not itself a security boundary, and a
+    // real player's client never renders the Layers/POI markup at all
+    // (the `{{#if showGmControls}}` guard in window.hbs, backed by this
+    // flag) regardless of what state.viewMode happens to hold.
+    this.IS_GM = game.user?.isGM === true;
+
+    this.layerConfig = defaultLayerConfig();
+    this.state = {
+      scrollX: lastKnownScrollX,
+      viewMode: this.IS_GM ? 'gm' : 'player',
+      compactMode: false,
+      // Free Dock is a per-browser display preference, not scene data, so
+      // it lives in a client-scoped game.settings entry rather than
+      // following the world.
+      freeDock: game.settings.get(MODULE_ID, 'freeDockEnabled'),
+      compassMode: 'full',
+      compassOpacity: 0.8,
+      showDragHint: true,
+      fullColourIcons: false,
+      palette: 'obsidian',
+      horizonLength: 'far',
+      daytime: 'day',
+      viewLocked: false,
+      // Ships empty — POIs are scenario-specific, so the GM adds their own
+      // via "+ Add POI" rather than starting from placeholder examples.
+      pois: [],
+      nextPoiId: 1
+    };
+
+    this._settingsOpen = false;
+    this._layersInfoOpen = false;
+    this._saveTimer = null;
+    this._applyingRemote = false;
+    this._paletteRev = 0;
+    this._lastAppliedPaletteRev = -1;
+    this._focusAnim = null;
+    this._isPanning = false;
+    this._panLastX = 0;
+    this._poiDrag = null;
+    this._winDrag = null;
+    this._winResize = null;
+    this._freeDockDrag = null;
+    this._savedRect = null;
+    this._compactPositionTimer = null;
+    this._minWinWidth = 0;
+    this._minWinHeight = 0;
+    this._boundGlobalListeners = false;
   }
 
-  const ICON_LABELS = {
-    tower:'Tower', mine:'Mineshaft', cave:'Cave', camp:'Camp', ruins:'Ruins',
-    bridge:'Bridge', danger:'Danger', village:'Village', tree:'Grove', water:'Water'
-  };
-  const ICON_FULLCOLOUR = {
-    tower:'#9aa1ad', mine:'#7a5236', cave:'#2b2f38', camp:'#d1793f', ruins:'#ab9c80',
-    bridge:'#7f92a6', danger:'#b7402f', village:'#caa159', tree:'#4f7d4c', water:'#3f80a8'
-  };
-  const POI_ICON_DEFS = {
-    tower:  (f) => `<svg viewBox="0 0 60 100" width="100%" height="100%" fill="${f}"><path d="M10,100 L10,30 L0,30 L0,10 L15,10 L15,30 L25,30 L25,10 L40,10 L40,30 L30,30 L30,10 L45,10 L45,30 L60,30 L60,100 Z"/></svg>`,
-    mine:   (f) => `<svg viewBox="0 0 100 80" width="100%" height="100%" fill="${f}"><polygon points="10,80 30,20 70,20 90,80"/><path d="M40,80 L40,40 L60,40 L60,80 Z" fill="rgba(255,255,255,0.18)"/></svg>`,
-    cave:   (f) => `<svg viewBox="0 0 120 70" width="100%" height="100%" fill="${f}"><path d="M0,70 Q40,0 60,0 T120,70 Z"/><path d="M40,70 Q50,30 60,30 T80,70 Z" fill="rgba(255,255,255,0.18)"/></svg>`,
-    camp:   (f) => `<svg viewBox="0 0 100 80" width="100%" height="100%" fill="${f}"><path d="M50,8 L92,80 L8,80 Z"/><path d="M50,8 L64,80 L36,80 Z" fill="rgba(0,0,0,0.28)"/></svg>`,
-    ruins:  (f) => `<svg viewBox="0 0 60 100" width="100%" height="100%" fill="${f}"><rect x="10" y="6" width="12" height="18"/><rect x="18" y="26" width="24" height="58"/><rect x="8" y="84" width="44" height="10"/></svg>`,
-    bridge: (f) => `<svg viewBox="0 0 120 60" width="100%" height="100%" fill="${f}"><path d="M0,60 L0,40 Q60,-8 120,40 L120,60 Z"/><rect x="14" y="40" width="8" height="20"/><rect x="98" y="40" width="8" height="20"/></svg>`,
-    danger: (f) => `<svg viewBox="0 0 100 90" width="100%" height="100%" fill="${f}"><path d="M50,2 L98,88 L2,88 Z"/><rect x="45" y="30" width="10" height="30" fill="rgba(0,0,0,0.35)"/><rect x="45" y="66" width="10" height="10" fill="rgba(0,0,0,0.35)"/></svg>`,
-    village:(f) => `<svg viewBox="0 0 120 70" width="100%" height="100%" fill="${f}"><path d="M4,70 L4,44 L20,28 L36,44 L36,70 Z"/><path d="M44,70 L44,36 L66,16 L88,36 L88,70 Z"/><path d="M96,70 L96,46 L110,34 L120,46 L120,70 Z" opacity="0.9"/></svg>`,
-    tree:   (f) => `<svg viewBox="0 0 60 90" width="100%" height="100%" fill="${f}"><path d="M30,0 L50,35 L42,35 L58,60 L48,60 L60,90 L0,90 L12,60 L2,60 L18,35 L10,35 Z"/></svg>`,
-    water:  (f) => `<svg viewBox="0 0 120 60" width="100%" height="100%" fill="${f}"><path d="M0,28 Q15,12 30,28 T60,28 T90,28 T120,28 L120,60 L0,60 Z"/></svg>`
-  };
-
-  let state = {
-    scrollX: 500,
-    viewMode: 'gm',
-    compactMode: false,
-    // Free Dock is a per-browser display preference, not scene data, so it
-    // lives in a client-scoped game.settings entry (registered in
-    // registerModuleSettings() below) rather than following the world.
-    freeDock: game.settings.get(MODULE_ID, 'freeDockEnabled'),
-    freeDockPos: null,
-    compassMode: 'full',      // 'full' | 'simple' | 'off'
-    compassOpacity: 0.8,
-    showDragHint: true,
-    fullColourIcons: false,
-    palette: 'obsidian',
-    horizonLength: 'far',   // 'far' | 'medium' | 'close'
-    daytime: 'day',         // 'day' | 'night'
-    viewLocked: false,      // true = players can't pan/scroll the horizon
-    // Ships empty — POIs are scenario-specific, so the GM adds their own
-    // via "+ Add POI" rather than starting from placeholder examples.
-    // The layer terrain below is the only thing that ships pre-populated
-    // (sensible default depth/biome per layer), since that's meant to be
-    // edited/replaced, not built from scratch.
-    pois: [],
-    nextPoiId: 1
-  };
-
-  function defaultOffsetYForLayer(layerId){
-    const layer = layerConfig.find(l => l.id === layerId) || layerConfig[3];
-    const invertedIdx = 5 - (layer.id - 1);
-    const baseY = 130 + (invertedIdx * 46);
-    return 400 - baseY;
+  /* ---------------- Mounting: keep the CSS-scoping wrapper ---------------- */
+  // Everything this module injects lives inside #shrimp-distant-horizons-
+  // root (see styles/distant-horizons.css's header comment) so that every
+  // rule scoped under it — including the palette custom properties and
+  // the bare select/input[range]/table selectors — keeps applying only to
+  // our own UI, never to the rest of Foundry's chrome or other modules.
+  // ApplicationV2 would otherwise append straight to <body>.
+  _insertElement(element){
+    let root = document.getElementById('shrimp-distant-horizons-root');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'shrimp-distant-horizons-root';
+      document.body.appendChild(root);
+    }
+    root.appendChild(element);
   }
 
-  // Tile is 3x the old width so the repeat is far less obvious. Every
-  // harmonic's frequency MUST be a whole number of cycles across the tile —
-  // sin(2π·k·x/width) only lands on the same value at x=0 and x=width when
-  // k is an integer, which is what makes the tile edges line up seamlessly
-  // under background-repeat. Variety instead comes from each of the 3
-  // numbered variants using its own distinct set of integer harmonics.
-  const FREQ_SETS = {
-    mountains: { 1:[3,7,13,21,34], 2:[4,9,16,27,41], 3:[2,5,11,19,29] },
-    hills:     { 1:[2,5,9,15],     2:[3,7,12,20],     3:[1,4,8,14]     },
-    desert:    { 1:[2,4,7],        2:[3,6,10],        3:[1,3,6]        },
-  };
-  const PHASES = [0, 1.7, 3.9, 0.6, 2.4, 5.0];
+  /* ---------------- Context for the Handlebars templates ---------------- */
+  async _prepareContext(options){
+    const s = this.state;
+    const isGmView = s.viewMode === 'gm';
+    // GM-only edit surface: the real permission gate (this.IS_GM) AND the
+    // GM's own local preview toggle both have to agree — see the
+    // constructor's IS_GM comment and this module's shipped permission fix.
+    const showGmControls = this.IS_GM && isGmView;
 
-  // Small deterministic PRNG (mulberry32) — same integer seed always
-  // produces the same sequence, so a given layer's jagged peak layout
-  // (Mountain 1) stays fixed across re-renders instead of reshuffling
-  // every time initLayers() runs.
-  function mulberry32(seed){
-    let t = seed >>> 0;
-    return function(){
-      t += 0x6D2B79F5;
-      let r = Math.imul(t ^ (t >>> 15), t | 1);
-      r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    const modeText = game.i18n.localize(isGmView ? 'SHRIMPSDH.Subtitle.GM' : 'SHRIMPSDH.Subtitle.Player');
+    const lockText = s.viewLocked ? game.i18n.localize('SHRIMPSDH.Subtitle.Locked') : '';
+    const dockText = game.i18n.localize('SHRIMPSDH.Subtitle.DockHint');
+    const subtitleText = game.i18n.format('SHRIMPSDH.Subtitle.Full', { mode: modeText, lock: lockText, dock: dockText });
+
+    let rawDeg = (s.scrollX / 10) % 360;
+    if (rawDeg < 0) rawDeg += 360;
+    const directions = ['N','NE','E','SE','S','SW','W','NW'];
+    const dirIndex = Math.round(rawDeg / 45) % 8;
+    const compassText = s.compassMode === 'simple' ? directions[dirIndex] : `${directions[dirIndex]} ${Math.round(rawDeg)}°`;
+
+    return {
+      isGM: this.IS_GM,
+      isGmView,
+      showGmControls,
+      isDay: s.daytime === 'day',
+      subtitleText,
+      viewLocked: s.viewLocked,
+      lockViewTitle: s.viewLocked ? game.i18n.localize('SHRIMPSDH.LockView.Unlock') : game.i18n.localize('SHRIMPSDH.LockView.Lock'),
+      lockViewIcon: s.viewLocked ? ICONS.lock : ICONS.unlock,
+      layerCountText: this.layerConfig.filter(l => l.enabled).length,
+      showDragHint: s.showDragHint,
+      compassOpacity: s.compassOpacity,
+      compassOff: s.compassMode === 'off',
+      compassText,
+      quickBiomeOptionsHtml: biomeOptionsHtml('mountains-1'),
+      layers: this.layerConfig.map(l => this._layerRowContext(l)),
+      pois: s.pois.map(p => this._poiRowContext(p)),
+      iconSun: ICONS.sun, iconMoon: ICONS.moon,
+      // settings PART
+      compass: { full: s.compassMode==='full', simple: s.compassMode==='simple', off: s.compassMode==='off' },
+      compassOpacityPct: Math.round(s.compassOpacity * 100),
+      fullColourIcons: s.fullColourIcons,
+      palette: s.palette,
+      horizonLength: s.horizonLength,
+      horizonLengthDesc: game.i18n.localize(HORIZON_LENGTH_DESC_KEYS[s.horizonLength] || HORIZON_LENGTH_DESC_KEYS.far),
+      freeDock: s.freeDock
     };
   }
 
-  function generateBiomePath(biomeFull, layerIdx){
-    const [family, variantStr] = biomeFull.split('-');
-    const variant = parseInt(variantStr, 10) || 1;
-    const vp = VARIANT_PARAMS[variant] || VARIANT_PARAMS[1];
-    const width = 3600, height = 400;
-    const invertedIdx = 5 - layerIdx;
-    const baseY = 130 + (invertedIdx * 46);
-    let path = `M 0,${height} L 0,${baseY} `;
-    const seed = layerIdx * 123.45 * vp.seedMul + vp.seedAdd;
+  _layerRowContext(layer){
+    const isUpload = !!layer.customImage && !layer.customImageBuiltin;
+    const showImageSettings = isUpload && layer.imageSettingsOpen;
+    return {
+      id: layer.id, enabled: layer.enabled, color: layer.color,
+      isUpload, showImageSettings,
+      imageChipTitle: `${STORAGE.layersUpload}${layer.customImageName || ''}`,
+      imageChipName: escapeHtml(layer.customImageName || 'custom'),
+      biomeOptionsHtml: isUpload ? '' : biomeOptionsHtml(layer.biome),
+      uploadTitle: game.i18n.format('SHRIMPSDH.Layers.UploadBtnTitle', { path: STORAGE.layersUpload }),
+      imageSettingsBtnTitle: game.i18n.localize('SHRIMPSDH.Layers.ImageSettingsBtnTitle'),
+      clearImageBtnTitle: game.i18n.localize('SHRIMPSDH.Layers.ClearImageBtnTitle'),
+      mirrorTile: layer.mirrorTile, tintToColor: layer.tintToColor !== false,
+      mirrorTileLabel: game.i18n.localize('SHRIMPSDH.Layers.MirrorTileLabel'),
+      mirrorTileHint: game.i18n.localize('SHRIMPSDH.Layers.MirrorTileHint'),
+      tintLabel: game.i18n.localize('SHRIMPSDH.Layers.TintLabel'),
+      tintHint: game.i18n.localize('SHRIMPSDH.Layers.TintHint'),
+      applyBtnLabel: game.i18n.localize('SHRIMPSDH.Layers.ApplyBtn'),
+      axisYLabel: game.i18n.localize('SHRIMPSDH.Layers.AxisY'),
+      axisXLabel: game.i18n.localize('SHRIMPSDH.Layers.AxisX'),
+      toggleTitle: game.i18n.format('SHRIMPSDH.Layers.ToggleTitle', { id: layer.id }),
+      yOffset: layer.yOffset, xOffset: layer.xOffset,
+      iconSliders: ICONS.sliders, iconClear: ICONS.clear, iconUpload: ICONS.upload, iconCheck: ICONS.check
+    };
+  }
 
-    if (family === 'mountains' && variant === 1) {
-      // Mountain 1: a sharp, jagged alpine skyline rather than the
-      // smoother rolling profile variants 2/3 use. Summing several sine
-      // harmonics (as the other variants do) always washes back out to
-      // a rounded hump — sharp features at different frequencies land
-      // at different x positions and average each other away. A real
-      // jagged range instead reads as a few dominant angular peaks with
-      // straight rocky slopes, so this builds that directly: an
-      // envelope (max) of several triangular peaks — genuinely sharp,
-      // straight-edged points, not an averaged curve — plus a small
-      // sawtooth jitter riding on top for rugged edge detail. Peak
-      // placement wraps around the tile width so the seam stays exact.
-      const rng = mulberry32(Math.floor((seed + 1000) * 977));
-      const peakCount = 4 + Math.floor(rng() * 2); // 4–5 bold summits
-      const baseAmp = (92 + invertedIdx * 24) * vp.ampMul;
-      const peaks = [];
-      for (let i=0;i<peakCount;i++){
-        const px = ((i + 0.5) / peakCount) * width + (rng() - 0.5) * (width / peakCount) * 0.7;
-        const heightMul = 0.4 + Math.pow(rng(), 1.4) * 1.05; // a few short, one or two dramatic
-        const halfWidth = (width / peakCount) * (0.24 + rng() * 0.3); // narrow => steep, knife-edge slopes
-        peaks.push({ px: ((px % width) + width) % width, h: baseAmp * heightMul, hw: halfWidth });
-      }
-      const jitterFreqs = [19, 37, 61];
-      for (let x=0; x<=width; x+=6) {
-        let dy = 0;
-        for (const pk of peaks){
-          const d = Math.abs(x - pk.px);
-          const wrapD = Math.min(d, width - d);
-          const tri = Math.max(0, 1 - wrapD / pk.hw);
-          dy = Math.max(dy, tri * pk.h);
-        }
-        // Fine rocky jaggedness — sharp, low-amplitude cusps riding on
-        // the main envelope so it roughens slopes without smoothing
-        // out the peaks above.
-        let jitter = 0, jAmp = 17;
-        for (let i=0;i<jitterFreqs.length;i++){
-          jitter += (1 - Math.abs(Math.sin((x/width)*Math.PI*2*jitterFreqs[i] + seed*1.7 + i))) * jAmp;
-          jAmp *= 0.5;
-        }
-        dy += jitter;
-        path += `L ${x},${baseY-dy} `;
-      }
-    } else if (family === 'mountains') {
-      const freqs = FREQ_SETS.mountains[variant];
-      const amps=[(58+(invertedIdx*15))*vp.ampMul, 30*vp.ampMul, 17*vp.ampMul, 9*vp.ampMul, 5*vp.ampMul];
-      for (let x=0; x<=width; x+=10) {
-        let dy=0;
-        for (let i=0;i<freqs.length;i++) dy += Math.abs(Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i])) * amps[i];
-        path += `L ${x},${baseY-dy} `;
-      }
-    } else if (family === 'hills') {
-      const freqs = FREQ_SETS.hills[variant];
-      const amps=[44*vp.ampMul, 26*vp.ampMul, 14*vp.ampMul, 7*vp.ampMul];
-      for (let x=0; x<=width; x+=15) {
-        let dy=0;
-        for (let i=0;i<freqs.length;i++) dy += Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i]) * amps[i];
-        path += `L ${x},${baseY-dy} `;
-      }
-    } else if (family === 'desert') {
-      const freqs = FREQ_SETS.desert[variant];
-      const amps=[32*vp.ampMul, 17*vp.ampMul, 8*vp.ampMul];
-      for (let x=0; x<=width; x+=20) {
-        let dy=0;
-        for (let i=0;i<freqs.length;i++) dy += Math.sin((x/width)*Math.PI*2*freqs[i]+seed+PHASES[i]) * amps[i];
-        path += `L ${x},${baseY+44-dy} `;
-      }
+  _poiRowContext(poi){
+    return {
+      id: poi.id, name: poi.name, locked: poi.locked,
+      hasCustomIcon: !!poi.customIcon,
+      customIconTitle: STORAGE.poisUpload,
+      iconOptionsHtml: poi.customIcon ? '' : poiIconOptionsHtml(poi.icon),
+      uploadIconTitle: game.i18n.format('SHRIMPSDH.POI.UploadBtnTitle', { path: STORAGE.poisUpload }),
+      clearIconTitle: game.i18n.localize('SHRIMPSDH.POI.ClearIconBtnTitle'),
+      layerOptionsHtml: this._poiLayerOptionsHtml(poi.layer),
+      sizeOptionsHtml: this._poiSizeOptionsHtml(poi.size || 'large'),
+      stateOptionsHtml: this._poiStateOptionsHtml(poi.state),
+      sizeTitle: game.i18n.localize('SHRIMPSDH.POI.Size.TitleFull'),
+      focusTitle: game.i18n.localize('SHRIMPSDH.POI.FocusBtnTitle'),
+      lockTitle: poi.locked ? game.i18n.localize('SHRIMPSDH.POI.UnlockBtnTitle') : game.i18n.localize('SHRIMPSDH.POI.LockBtnTitle'),
+      deleteTitle: game.i18n.localize('SHRIMPSDH.POI.DeleteBtnTitle'),
+      lockIcon: poi.locked ? ICONS.lock : ICONS.unlock,
+      iconClear: ICONS.clear, iconUpload: ICONS.upload, iconEye: ICONS.eye
+    };
+  }
+
+  _poiLayerOptionsHtml(selectedId){
+    return this.layerConfig.map(l => `<option value="${l.id}" ${selectedId==l.id?'selected':''}>L${l.id}</option>`).join('');
+  }
+  _poiSizeOptionsHtml(selected){
+    return [['small','SHRIMPSDH.POI.Size.Small'],['medium','SHRIMPSDH.POI.Size.Medium'],['large','SHRIMPSDH.POI.Size.Large']]
+      .map(([val,key]) => `<option value="${val}" ${selected===val?'selected':''}>${game.i18n.localize(key)}</option>`).join('');
+  }
+  _poiStateOptionsHtml(selected){
+    return POI_STATE_ORDER.map(s =>
+      `<option value="${s}" ${selected===s?'selected':''}>${game.i18n.localize(POI_STATE_LABEL_KEYS[s])}</option>`
+    ).join('');
+  }
+
+  /* ---------------- Render lifecycle ---------------- */
+  _onFirstRender(context, options){
+    // Listeners bound to `window`/`document` persist for the app's whole
+    // lifetime and must be attached exactly once — everything else
+    // (buttons, rows, sliders) lives inside content that _onRender
+    // rebuilds every render, so those are (re)bound there instead.
+    this._bindGlobalListeners();
+    // ApplicationV2's own auto-centred initial placement would otherwise
+    // win over styles/distant-horizons.css's `#dh-window{left:3vw;
+    // top:8vh}` (inline styles beat a stylesheet rule) — set the intended
+    // starting position explicitly, through the framework's own position
+    // API, so it lands where the original design always put it: an
+    // out-of-the-way corner, not centred over the canvas.
+    if (!this.state.compactMode) this.setPosition(this._computeDefaultPosition());
+  }
+
+  _computeDefaultPosition(){
+    return {
+      left: Math.round(window.innerWidth * 0.03),
+      top: Math.round(window.innerHeight * 0.08),
+      width: Math.min(820, Math.round(window.innerWidth * 0.94))
+    };
+  }
+
+  _onRender(context, options){
+    const el = this.element;
+
+    // Restore popup open/closed state — the settings/layers-info PARTS
+    // always render `hidden` by default; whether they're actually open
+    // is UI chrome state that lives on the instance, not in the model
+    // _prepareContext() describes.
+    const settingsPanel = el.querySelector('#dh-settings');
+    if (settingsPanel) {
+      settingsPanel.hidden = !this._settingsOpen;
+      if (this._settingsOpen) this._positionSettings();
     }
-    // Forest has no procedural case — it's always one of the two
-    // hand-drawn images (BUILTIN_LAYER_IMAGES.forest), routed through the
-    // customImage path in initLayers() rather than generateBiomePath.
-    path += `L ${width},${baseY} L ${width},${height} Z`;
-    return path;
+    const infoPopup = el.querySelector('#layers-info-popup');
+    if (infoPopup) {
+      infoPopup.hidden = !this._layersInfoOpen;
+      if (this._layersInfoOpen) this._positionLayersInfo();
+    }
+
+    // Persistent chrome classes — these live on `this.element` itself,
+    // which _onRender never replaces (only PART content is rebuilt), so
+    // they're only *applied* here, never reset by a render.
+    el.classList.toggle('compact', this.state.compactMode);
+    el.classList.toggle('free-dock', this.state.compactMode && this.state.freeDock);
+    el.classList.toggle('dragging', !!this._winDrag);
+
+    this._wireDynamicControls();
+
+    // Rebuild the imperative horizon-view content (terrain layers + POI
+    // markers) — #layers-container itself is always emptied by the
+    // template, so this has to run after every render, same as the
+    // original module's boot()/initLayers() did after every mutation.
+    this._initLayers();
+
+    if (this.state.compactMode) {
+      if (this.state.freeDock) this._applyFreeDockPosition();
+      else this._positionCompactDock();
+    }
+
+    if (!this._minWinWidth) {
+      requestAnimationFrame(() => this._captureMinWindowSize());
+    }
   }
 
-  const dhWindow        = document.getElementById('dh-window');
-  const container        = document.getElementById('layers-container');
-  const compassHud       = document.getElementById('compass-hud');
-  const compassText      = document.getElementById('compass-text');
-  const layerCountText   = document.getElementById('layer-count-text');
-  const dragHintEl       = document.getElementById('drag-hint');
-  const layerRowsEl      = document.getElementById('layer-rows');
-  const poiListEl        = document.getElementById('poi-list');
-
-  function escapeHtml(str){
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
+  async _preClose(options){
+    // Flush any pending debounced scene save immediately rather than
+    // losing up to 500ms of edits to a close — the pre-ApplicationV2
+    // version never truly unmounted (it only toggled display:none), so
+    // it never needed this; a real close() does.
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+      this._flushSave();
+    }
+    if (this._compactPositionTimer) {
+      window.clearInterval(this._compactPositionTimer);
+      this._compactPositionTimer = null;
+    }
+    if (this._focusAnim) {
+      cancelAnimationFrame(this._focusAnim.raf);
+      this._focusAnim = null;
+    }
+    lastKnownScrollX = this.state.scrollX;
+    this._unbindGlobalListeners();
   }
 
-  function readImageFile(file, cb){
-    const reader = new FileReader();
-    reader.onload = () => cb(reader.result);
-    reader.readAsDataURL(file);
-  }
+  /* ---------------- Global (window/document) listeners — bound once ---------------- */
+  _bindGlobalListeners(){
+    if (this._boundGlobalListeners) return;
+    this._boundGlobalListeners = true;
 
-  // Builds a [image][horizontally-flipped copy] tile on a canvas. Tiling
-  // that doubled image with repeat-x is guaranteed seam-free for ANY
-  // source image — the flip means every tile boundary lines up pixel-
-  // for-pixel with its neighbour, at the cost of every other repeat
-  // appearing mirrored.
-  function buildMirrorTile(img, cb){
-    const w = img.naturalWidth, h = img.naturalHeight;
-    if (!w || !h) { cb(null, null); return; }
-    const canvas = document.createElement('canvas');
-    canvas.width = w * 2; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, w, h);
-    ctx.save();
-    ctx.translate(w * 2, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(img, 0, 0, w, h);
-    ctx.restore();
-    cb(canvas.toDataURL('image/png'), { width: w * 2, height: h });
-  }
-
-  // Re-derives layer.customImage (what's actually painted) from
-  // layer.customImageRaw (what was uploaded) + layer.mirrorTile. Also
-  // reports the painted image's pixel dimensions via the callback's
-  // second argument — needed to snap the CSS tile width to a whole
-  // pixel (see applyCustomImageSize) so repeat-x tiling never lands on
-  // a fractional pixel and shows a hairline seam at the repeat edge.
-  function processCustomImage(layer, cb){
-    if (!layer.customImageRaw) { cb(null, null); return; }
-    const img = new Image();
-    img.onload = () => {
-      if (layer.mirrorTile) {
-        buildMirrorTile(img, cb);
-      } else {
-        cb(layer.customImageRaw, { width: img.naturalWidth, height: img.naturalHeight });
+    this._onWindowMouseMove = (e) => this._handleWindowMouseMove(e);
+    this._onWindowMouseUp = () => this._handleWindowMouseUp();
+    this._onWindowTouchMove = (e) => this._handleWindowTouchMove(e);
+    this._onWindowTouchEnd = () => { this._isPanning = false; };
+    this._onWindowResize = () => {
+      this._updateVisuals();
+      if (this.state.compactMode && !this.state.freeDock) this._positionCompactDock();
+      if (this._settingsOpen) this._positionSettings();
+      if (this._layersInfoOpen) this._positionLayersInfo();
+    };
+    this._onDocumentClick = (e) => {
+      const el = this.element;
+      if (!el) return;
+      const settingsPanel = el.querySelector('#dh-settings');
+      const cogBtn = el.querySelector('#cog-btn');
+      if (settingsPanel && !settingsPanel.hidden && !settingsPanel.contains(e.target) && e.target !== cogBtn) {
+        this._closeSettings();
+      }
+      const infoPopup = el.querySelector('#layers-info-popup');
+      const infoBtn = el.querySelector('#layers-info-btn');
+      if (infoPopup && !infoPopup.hidden && !infoPopup.contains(e.target) && e.target !== infoBtn) {
+        this._closeLayersInfo();
       }
     };
-    img.onerror = () => cb(layer.customImageRaw, null);
-    img.src = layer.customImageRaw;
+
+    window.addEventListener('mousemove', this._onWindowMouseMove);
+    window.addEventListener('mouseup', this._onWindowMouseUp);
+    window.addEventListener('touchmove', this._onWindowTouchMove, { passive: true });
+    window.addEventListener('touchend', this._onWindowTouchEnd);
+    window.addEventListener('resize', this._onWindowResize);
+    document.addEventListener('click', this._onDocumentClick);
+  }
+  _unbindGlobalListeners(){
+    if (!this._boundGlobalListeners) return;
+    this._boundGlobalListeners = false;
+    window.removeEventListener('mousemove', this._onWindowMouseMove);
+    window.removeEventListener('mouseup', this._onWindowMouseUp);
+    window.removeEventListener('touchmove', this._onWindowTouchMove);
+    window.removeEventListener('touchend', this._onWindowTouchEnd);
+    window.removeEventListener('resize', this._onWindowResize);
+    document.removeEventListener('click', this._onDocumentClick);
   }
 
-  // The current pixel height of the horizon strip — a fixed constant per
-  // view mode (168px normal, 158px compact/docked), not something that
-  // needs measuring from layout.
-  function horizonHeightPx(){
-    return state.compactMode ? 158 : 168;
-  }
+  /* ---------------- Per-render element wiring ---------------- */
+  _wireDynamicControls(){
+    const el = this.element;
 
-  // Custom-image layers used `background-size/mask-size: auto 100%`,
-  // which lets the browser pick a fractional CSS pixel width for the
-  // tile (naturalWidth * containerHeight/naturalHeight is essentially
-  // never a whole number). A repeat-x background tiled at a fractional
-  // width rounds differently at each tile boundary, which shows up as a
-  // faint vertical seam line wherever two tiles meet — this is what the
-  // "edges aren't seamless" report was seeing, not a flaw in the
-  // artwork or the mirror-doubling itself (pixel-level mirror boundary
-  // and wrap-around edges are exact, verified byte-for-byte).
-  // Fix: keep height as '100%' (that axis never repeats, so it can't
-  // seam), but compute the width in real pixels, rounded to a whole
-  // number, so every tile repeat lands on an exact pixel boundary.
-  function applyCustomImageSize(layer, bgEl){
-    const dims = layer.customImageDims;
-    const h = horizonHeightPx();
-    if (!dims || !dims.width || !dims.height) {
-      bgEl.style.webkitMaskSize = bgEl.style.maskSize = 'auto 100%';
-      bgEl.style.backgroundSize = 'auto 100%';
-      return;
+    // -- Titlebar drag / resize / free-dock-handle / horizon panning --
+    const draghandle = el.querySelector('#dh-draghandle');
+    if (draghandle) {
+      draghandle.addEventListener('mousedown', (e) => this._startWindowDrag(e));
+      draghandle.addEventListener('dblclick', () => { if (!this.state.compactMode) this._enterCompact(); });
     }
-    const wPx = Math.round(dims.width * (h / dims.height));
-    const sizeStr = `${wPx}px 100%`;
-    bgEl.style.webkitMaskSize = sizeStr;
-    bgEl.style.maskSize = sizeStr;
-    bgEl.style.backgroundSize = sizeStr;
+    const horizonView = el.querySelector('#horizon-view');
+    if (horizonView) {
+      horizonView.addEventListener('mousedown', (e) => this._startPan(e));
+      horizonView.addEventListener('touchstart', (e) => this._startPanTouch(e), { passive: true });
+      horizonView.addEventListener('dblclick', () => { if (this.state.compactMode) this._exitCompact(); });
+    }
+    const resizeHandle = el.querySelector('#dh-resize-handle');
+    if (resizeHandle) resizeHandle.addEventListener('mousedown', (e) => this._startWindowResize(e));
+    const freeDockHandle = el.querySelector('#dh-free-dock-handle');
+    if (freeDockHandle) freeDockHandle.addEventListener('mousedown', (e) => this._startFreeDockDrag(e));
+
+    // -- Layer rows: biome select + Y/X offset sliders (delegated) --
+    const layerRows = el.querySelector('#layer-rows');
+    if (layerRows) {
+      layerRows.addEventListener('change', (e) => this._onLayerRowsChange(e));
+      layerRows.addEventListener('input', (e) => this._onLayerRowsInput(e));
+    }
+
+    // -- POI table: name/icon/layer/size/state + icon-file (delegated) --
+    const poiList = el.querySelector('#poi-list');
+    if (poiList) {
+      poiList.addEventListener('change', (e) => this._onPoiListChange(e));
+    }
+
+    // -- Settings panel --
+    const settingsPanel = el.querySelector('#dh-settings');
+    if (settingsPanel) {
+      settingsPanel.querySelector('#opt-compass-mode')?.addEventListener('change', (e) => {
+        this.state.compassMode = e.target.value;
+        this.render();
+      });
+      settingsPanel.querySelector('#opt-compass-opacity')?.addEventListener('input', (e) => {
+        this.state.compassOpacity = parseInt(e.target.value, 10) / 100;
+        el.querySelector('#compass-hud')?.style.setProperty('--compass-opacity', this.state.compassOpacity);
+      });
+      settingsPanel.querySelector('#opt-draghint')?.addEventListener('change', (e) => {
+        this.state.showDragHint = e.target.checked;
+        const hint = el.querySelector('#drag-hint');
+        if (hint) hint.hidden = !this.state.showDragHint;
+      });
+      settingsPanel.querySelector('#opt-fullcolour')?.addEventListener('change', (e) => {
+        this.state.fullColourIcons = e.target.checked;
+        this._renderPOIs();
+      });
+      settingsPanel.querySelector('#opt-palette')?.addEventListener('change', (e) => {
+        this._applyPalette(e.target.value);
+        // A deliberate GM push — see "Scene persistence + GM -> player
+        // sync" below for what's actually shared vs. kept local. Takes
+        // over for everyone, including a player who'd picked their own
+        // palette since the GM's last push.
+        this._pushPaletteIfGm();
+      });
+      settingsPanel.querySelector('#opt-horizon-length')?.addEventListener('change', (e) => {
+        this.state.horizonLength = e.target.value;
+        this._scheduleSave();
+        this.render();
+      });
+      settingsPanel.querySelector('#opt-free-dock')?.addEventListener('change', (e) => {
+        this.state.freeDock = e.target.checked;
+        game.settings.set(MODULE_ID, 'freeDockEnabled', this.state.freeDock);
+        el.classList.toggle('free-dock', this.state.freeDock);
+        if (this.state.compactMode) {
+          if (this.state.freeDock) this._applyFreeDockPosition();
+          else {
+            el.style.removeProperty('--free-dock-left');
+            el.style.removeProperty('--free-dock-top');
+            this._positionCompactDock();
+          }
+        }
+      });
+    }
   }
 
-  // Re-applies the pixel-snapped tile width to every enabled custom-image
-  // layer currently in the DOM. Needed whenever the horizon strip's
-  // height changes (168px ↔ 158px on compact-mode toggle) since the
-  // computed width depends on that height.
-  function refreshCustomImageSizes(){
-    layerConfig.forEach(layer => {
-      if (!layer.enabled || !layer.customImage) return;
-      const bgEl = document.getElementById(`layer-bg-${layer.id}`);
-      if (bgEl) applyCustomImageSize(layer, bgEl);
+  _onLayerRowsChange(e){
+    const t = e.target;
+    const layerId = parseInt(t.dataset.layerId, 10);
+    const layer = this.layerConfig.find(l => l.id === layerId);
+    if (!layer) return;
+    if (t.classList.contains('layer-biome')) {
+      this._applyBiomeOrImage(layer, t.value, () => this.render());
+    } else if (t.classList.contains('layer-file-input')) {
+      const file = t.files[0];
+      if (!file) return;
+      readImageFile(file, (dataUrl) => {
+        layer.customImageRaw = dataUrl; layer.customImageName = file.name;
+        if (layer.mirrorTile === undefined) layer.mirrorTile = true;
+        if (layer.tintToColor === undefined) layer.tintToColor = true;
+        layer.imageSettingsOpen = true;
+        layer.customImageBuiltin = false;
+        processCustomImage(layer, (finalUrl, dims) => {
+          layer.customImage = finalUrl;
+          layer.customImageDims = dims;
+          this.render();
+        });
+      });
+    }
+  }
+  _onLayerRowsInput(e){
+    const t = e.target;
+    const layerId = parseInt(t.dataset.layerId, 10);
+    const layer = this.layerConfig.find(l => l.id === layerId);
+    if (!layer) return;
+    if (t.classList.contains('layer-offset-y')) {
+      layer.yOffset = parseInt(t.value, 10);
+      const row = t.closest('.layer-row');
+      const val = row?.querySelectorAll('.val')[0];
+      if (val) val.textContent = `${layer.yOffset}px`;
+      requestAnimationFrame(() => this._updateVisuals());
+    } else if (t.classList.contains('layer-offset-x')) {
+      layer.xOffset = parseInt(t.value, 10);
+      const row = t.closest('.layer-row');
+      const val = row?.querySelectorAll('.val')[1];
+      if (val) val.textContent = `${layer.xOffset}px`;
+      requestAnimationFrame(() => this._updateVisuals());
+    }
+  }
+
+  _onPoiListChange(e){
+    const t = e.target;
+    const poiId = parseInt(t.dataset.poiId, 10);
+    const poi = this.state.pois.find(p => p.id === poiId);
+    if (!poi) return;
+    if (t.classList.contains('poi-name-input')) {
+      poi.name = t.value;
+      this._renderPOIs();
+    } else if (t.classList.contains('poi-icon-select')) {
+      poi.icon = t.value; poi.customIcon = null;
+      this.render();
+    } else if (t.classList.contains('poi-icon-file')) {
+      const file = t.files[0];
+      if (!file) return;
+      readImageFile(file, (dataUrl) => { poi.customIcon = dataUrl; this.render(); });
+    } else if (t.classList.contains('poi-layer-select')) {
+      // Keep the POI exactly where it visually is on screen — reassigning
+      // a layer shouldn't teleport it, just change which terrain it's
+      // pinned to (different pan speed / colour / Y-offset).
+      const oldLayer = this.layerConfig.find(l => l.id === poi.layer);
+      const newLayerId = parseInt(t.value, 10);
+      const newLayer = this.layerConfig.find(l => l.id === newLayerId);
+      if (oldLayer && newLayer) {
+        const visualX = poi.xPos - (this.state.scrollX * oldLayer.speed) + oldLayer.xOffset;
+        poi.xPos = visualX + (this.state.scrollX * newLayer.speed) - newLayer.xOffset;
+        poi.offsetY = poi.offsetY - oldLayer.yOffset + newLayer.yOffset;
+      }
+      poi.layer = newLayerId;
+      this._renderPOIs();
+    } else if (t.classList.contains('size-sel')) {
+      poi.size = t.value;
+      this._renderPOIs();
+    } else if (t.classList.contains('poi-state-select')) {
+      poi.state = t.value;
+      this._renderPOIs();
+      this.render();
+    }
+  }
+
+  /* ---------------- Action handlers (invoked by DEFAULT_OPTIONS.actions with `this` bound to the app instance) ---------------- */
+  static #onToggleSettings(event){ event.stopPropagation(); this._toggleSettings(); }
+  static #onToggleLayersInfo(event){ event.stopPropagation(); this._toggleLayersInfo(); }
+  static #onSetViewMode(event, target){
+    // Defense in depth on top of the toggle being absent from a real
+    // player's rendered markup entirely (see showGmControls/IS_GM) — even
+    // if this were somehow invoked (stale render, dev tools), an actual
+    // player's client can never switch itself into 'gm' mode.
+    if (!this.IS_GM) return;
+    this.state.viewMode = target.dataset.mode;
+    this.render();
+  }
+  static #onSetDaytime(event, target){
+    this.state.daytime = target.dataset.time;
+    this._scheduleSave();
+    this.render();
+  }
+  static #onToggleLockView(){
+    // Lock View is a GM action (it restricts what PLAYERS can do) — a real
+    // player toggling their own lock would defeat the point of it. The
+    // button itself is absent from a real player's rendered markup
+    // (IS_GM guard in window.hbs); this is the same defense-in-depth as
+    // the view-mode guard above.
+    if (!this.IS_GM) return;
+    this.state.viewLocked = !this.state.viewLocked;
+    this._scheduleSave();
+    this.render();
+  }
+  static #onAddPoi(){
+    const icons = Object.keys(ICON_LABEL_KEYS);
+    const firstEnabled = this.layerConfig.find(l => l.enabled) || this.layerConfig[3];
+    this.state.pois.push({
+      id: this.state.nextPoiId++,
+      name: game.i18n.localize('SHRIMPSDH.POI.NewName'),
+      layer: firstEnabled.id,
+      xPos: this.state.scrollX + 300,
+      offsetY: this._defaultOffsetYForLayer(firstEnabled.id),
+      state: 'rumored',
+      size: 'large',
+      icon: icons[Math.floor(Math.random()*icons.length)],
+      customIcon: null,
+      locked: false
+    });
+    this.render();
+  }
+  static #onApplyQuickBiome(event, target){
+    const select = this.element.querySelector('#quick-biome-select');
+    const b = select?.value || 'mountains-1';
+    let remaining = this.layerConfig.length;
+    const done = () => { remaining--; if (remaining <= 0) this.render(); };
+    this.layerConfig.forEach(l => this._applyBiomeOrImage(l, b, done));
+  }
+  static #onResetWindowPosition(){ this._resetWindowPosition(); }
+  static #onToggleLayerEnabled(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.enabled = target.checked;
+    this.render();
+  }
+  static #onToggleLayerMirrorTile(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.mirrorTile = target.checked;
+    processCustomImage(layer, (finalUrl, dims) => {
+      layer.customImage = finalUrl;
+      layer.customImageDims = dims;
+      this.render();
     });
   }
+  static #onToggleLayerTint(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.tintToColor = target.checked;
+    this.render();
+  }
+  static #onTriggerLayerUpload(event, target){
+    target.parentElement?.querySelector('.layer-file-input')?.click();
+  }
+  static #onOpenLayerImageSettings(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.imageSettingsOpen = true;
+    this.render();
+  }
+  static #onClearLayerImage(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.customImage = null; layer.customImageName = null; layer.customImageRaw = null;
+    layer.customImageDims = null;
+    layer.imageSettingsOpen = false;
+    // Forest has no procedural fallback (it's image-only), so clearing an
+    // image-based layer needs a real biome to land on.
+    if (!layer.biome || layer.biome.startsWith('img:')) layer.biome = 'mountains-1';
+    this.render();
+  }
+  static #onApplyLayerImageSettings(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    layer.imageSettingsOpen = false;
+    this.render();
+  }
+  static #onTriggerPoiIconUpload(event, target){
+    target.closest('.poi-icon-field')?.querySelector('.poi-icon-file')?.click();
+  }
+  static #onClearPoiIcon(event, target){
+    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    if (!poi) return;
+    poi.customIcon = null;
+    this.render();
+  }
+  static #onFocusPoi(event, target){
+    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    if (poi) this._focusOnPoi(poi);
+  }
+  static #onTogglePoiLock(event, target){
+    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    if (!poi) return;
+    poi.locked = !poi.locked;
+    this.render();
+  }
+  static #onDeletePoi(event, target){
+    const poiId = parseInt(target.dataset.poiId, 10);
+    this.state.pois = this.state.pois.filter(p => p.id !== poiId);
+    this.render();
+  }
 
-  // Shared by the per-layer biome dropdown and "Apply all": a plain value
-  // ("mountains-2") sets a procedural biome and clears any custom image;
-  // an "img:" value (Forest's built-in hand-drawn presets) resolves that
-  // preset through the same pipeline a manual upload goes through.
-  // Calls cb() once the layer is ready to redraw.
-  function applyBiomeOrImage(layer, val, cb){
+  /* ---------------- Settings / Layers-info popups (body-level, JS-positioned) ---------------- */
+  _toggleSettings(){ this._settingsOpen ? this._closeSettings() : this._openSettings(); }
+  _openSettings(){
+    this._settingsOpen = true;
+    const panel = this.element.querySelector('#dh-settings');
+    const cogBtn = this.element.querySelector('#cog-btn');
+    if (panel) panel.hidden = false;
+    cogBtn?.classList.add('active');
+    this._positionSettings();
+  }
+  _closeSettings(){
+    this._settingsOpen = false;
+    const panel = this.element.querySelector('#dh-settings');
+    if (panel) panel.hidden = true;
+    this.element.querySelector('#cog-btn')?.classList.remove('active');
+  }
+  _positionSettings(){
+    const cogBtn = this.element.querySelector('#cog-btn');
+    const panel = this.element.querySelector('#dh-settings');
+    if (!cogBtn || !panel) return;
+    const r = cogBtn.getBoundingClientRect();
+    const width = 250;
+    let left = r.right - width;
+    left = Math.max(8, Math.min(window.innerWidth - width - 8, left));
+    let top = r.bottom + 6;
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+  }
+
+  _toggleLayersInfo(){ this._layersInfoOpen ? this._closeLayersInfo() : this._openLayersInfo(); }
+  _openLayersInfo(){
+    this._layersInfoOpen = true;
+    const popup = this.element.querySelector('#layers-info-popup');
+    if (popup) popup.hidden = false;
+    this.element.querySelector('#layers-info-btn')?.classList.add('active');
+    this._positionLayersInfo();
+  }
+  _closeLayersInfo(){
+    this._layersInfoOpen = false;
+    const popup = this.element.querySelector('#layers-info-popup');
+    if (popup) popup.hidden = true;
+    this.element.querySelector('#layers-info-btn')?.classList.remove('active');
+  }
+  _positionLayersInfo(){
+    const btn = this.element.querySelector('#layers-info-btn');
+    const popup = this.element.querySelector('#layers-info-popup');
+    if (!btn || !popup) return;
+    const r = btn.getBoundingClientRect();
+    const width = 280;
+    let left = r.left;
+    left = Math.max(8, Math.min(window.innerWidth - width - 8, left));
+    let top = r.bottom + 6;
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
+  }
+
+  /* ---------------- Biome / custom image helpers ---------------- */
+  _applyBiomeOrImage(layer, val, cb){
     if (val.startsWith('img:')) {
       const key = val.slice(4);
       const preset = Object.values(BUILTIN_LAYER_IMAGES).flat().find(b => b.key === key);
       if (!preset) { cb(); return; }
       layer.biome = val;
       layer.customImageRaw = preset.src;
-      layer.customImageName = preset.label;
+      layer.customImageName = game.i18n.localize(preset.labelKey);
       layer.mirrorTile = true;
       layer.tintToColor = true;
       layer.imageSettingsOpen = false;
-      // A built-in preset (shipped with the module) is just another biome
-      // choice, not a user upload — the row stays a plain dropdown like
-      // Mountains/Hills/Desert, with none of the upload-specific chip,
-      // tiling/tint toggles or "revert to procedural" control.
       layer.customImageBuiltin = true;
       processCustomImage(layer, (finalUrl, dims) => {
         layer.customImage = finalUrl;
@@ -593,23 +1072,56 @@ function initDistantHorizonsUI(){
       cb();
     }
   }
-
-  // This filler only ever covers the gap a layer's own upward Y-offset
-  // opens beneath it (same amount, no more) — it does NOT try to guess or
-  // force any extra "safety" fill for a custom image's own artwork. A
-  // synthetic flat rectangle taller than that gap looked wrong: a hard
-  // straight edge sitting under organic tree silhouettes. Instead, custom
-  // images are expected to already reach their own bottom edge solid (see
-  // the Layers info popup's upload guidance) — like the bundled Forest
-  // presets do — so this filler and the image's own base line up flush.
-  function fillerHeightFor(layer){
+  _applyPalette(paletteName){
+    this.state.palette = paletteName;
+    // Scoped to our own injected root, not the real page <html> — see the
+    // CSS file's header comment on #shrimp-distant-horizons-root for why
+    // setting this (and our CSS vars) on the real :root would leak into
+    // the rest of Foundry's UI.
+    document.getElementById('shrimp-distant-horizons-root')?.setAttribute('data-palette', this.state.palette);
+    applyLayerPaletteColors(this.layerConfig, this.state.palette);
+    this.render();
+  }
+  _defaultOffsetYForLayer(layerId){
+    const layer = this.layerConfig.find(l => l.id === layerId) || this.layerConfig[3];
+    const invertedIdx = 5 - (layer.id - 1);
+    const baseY = 130 + (invertedIdx * 46);
+    return 400 - baseY;
+  }
+  _fillerHeightFor(layer){
     return Math.max(0, -layer.yOffset);
   }
+  _horizonHeightPx(){
+    return this.state.compactMode ? 158 : 168;
+  }
+  _applyCustomImageSize(layer, bgEl){
+    const dims = layer.customImageDims;
+    const h = this._horizonHeightPx();
+    if (!dims || !dims.width || !dims.height) {
+      bgEl.style.webkitMaskSize = bgEl.style.maskSize = 'auto 100%';
+      bgEl.style.backgroundSize = 'auto 100%';
+      return;
+    }
+    const wPx = Math.round(dims.width * (h / dims.height));
+    const sizeStr = `${wPx}px 100%`;
+    bgEl.style.webkitMaskSize = sizeStr;
+    bgEl.style.maskSize = sizeStr;
+    bgEl.style.backgroundSize = sizeStr;
+  }
+  _refreshCustomImageSizes(){
+    this.layerConfig.forEach(layer => {
+      if (!layer.enabled || !layer.customImage) return;
+      const bgEl = this.element.querySelector(`#layer-bg-${layer.id}`);
+      if (bgEl) this._applyCustomImageSize(layer, bgEl);
+    });
+  }
 
-  /* ---------------- Horizon layers ---------------- */
-  function initLayers(){
+  /* ---------------- Horizon layers + POI markers (imperative, per README notes above) ---------------- */
+  _initLayers(){
+    const container = this.element.querySelector('#layers-container');
+    if (!container) return;
     container.innerHTML = '';
-    [...layerConfig].reverse().forEach(layer => {
+    [...this.layerConfig].reverse().forEach(layer => {
       if (!layer.enabled) return;
 
       const filler = document.createElement('div');
@@ -617,7 +1129,7 @@ function initDistantHorizonsUI(){
       filler.id = `layer-fill-${layer.id}`;
       filler.style.zIndex = layer.baseZ;
       filler.style.background = layer.color;
-      filler.style.height = `${fillerHeightFor(layer)}px`;
+      filler.style.height = `${this._fillerHeightFor(layer)}px`;
       container.appendChild(filler);
 
       const bgWrapper = document.createElement('div');
@@ -627,10 +1139,6 @@ function initDistantHorizonsUI(){
 
       if (layer.customImage) {
         if (layer.tintToColor !== false) {
-          // Recolour the uploaded silhouette to this layer's palette shade
-          // via a CSS mask (same trick as the shrimp logo / POI icons),
-          // so a single uploaded image works at any depth and re-tints
-          // automatically when the palette changes.
           bgWrapper.classList.add('masked-custom');
           bgWrapper.style.background = layer.color;
           bgWrapper.style.webkitMaskImage = `url("${layer.customImage}")`;
@@ -639,7 +1147,7 @@ function initDistantHorizonsUI(){
           bgWrapper.classList.remove('masked-custom');
           bgWrapper.style.backgroundImage = `url("${layer.customImage}")`;
         }
-        applyCustomImageSize(layer, bgWrapper);
+        this._applyCustomImageSize(layer, bgWrapper);
       } else {
         const svgPath = generateBiomePath(layer.biome, layer.id - 1);
         const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 400" preserveAspectRatio="none"><path fill="${layer.color}" d="${svgPath}"/></svg>`;
@@ -649,15 +1157,12 @@ function initDistantHorizonsUI(){
 
       container.appendChild(bgWrapper);
     });
-    const activeCount = layerConfig.filter(l => l.enabled).length;
-    layerCountText.textContent = activeCount;
-    renderPOIs();
+    this._renderPOIs();
   }
 
-  /* ---------------- POI icon rendering ---------------- */
-  function renderIconMarkup(poi, layer){
+  _renderIconMarkup(poi, layer){
     if (poi.customIcon) {
-      if (state.fullColourIcons) {
+      if (this.state.fullColourIcons) {
         return `<img src="${poi.customIcon}" style="width:100%;height:100%;object-fit:contain;display:block;">`;
       }
       return `<div style="width:100%;height:100%;background:${layer.color};
@@ -667,41 +1172,43 @@ function initDistantHorizonsUI(){
         -webkit-mask-position:center; mask-position:center;"></div>`;
     }
     const defFn = POI_ICON_DEFS[poi.icon] || POI_ICON_DEFS.tower;
-    const fill = state.fullColourIcons ? (ICON_FULLCOLOUR[poi.icon] || '#c9a75c') : layer.color;
+    const fill = this.state.fullColourIcons ? (ICON_FULLCOLOUR[poi.icon] || '#c9a75c') : layer.color;
     return defFn(fill);
   }
 
-  function renderPOIs(){
-    document.querySelectorAll('.poi-container').forEach(el => el.remove());
+  _renderPOIs(){
+    const el = this.element;
+    const container = el.querySelector('#layers-container');
+    if (!container) return;
+    el.querySelectorAll('.poi-container').forEach(node => node.remove());
 
-    state.pois.forEach(poi => {
-      const layer = layerConfig.find(l => l.id === parseInt(poi.layer, 10));
+    this.state.pois.forEach(poi => {
+      const layer = this.layerConfig.find(l => l.id === parseInt(poi.layer, 10));
       if (!layer || !layer.enabled) return;
       if (poi.state === 'hidden') return;
 
       const poiEl = document.createElement('div');
-      const draggable = state.viewMode === 'gm' && !state.compactMode && !poi.locked;
+      const draggable = this.state.viewMode === 'gm' && !this.state.compactMode && !poi.locked;
       poiEl.className = 'poi-container' + (draggable ? ' draggable' : '');
       poiEl.id = `poi-${poi.id}`;
       poiEl.style.zIndex = layer.baseZ + 5;
 
-      const SIZE_MUL = { small:0.45, medium:0.7, large:1.0 };
-      const visualScale = layer.scale * 1.4 * (SIZE_MUL[poi.size] || SIZE_MUL.large);
+      const visualScale = layer.scale * 1.4 * (POI_SIZE_MUL[poi.size] || POI_SIZE_MUL.large);
       // Name card only appears once a POI is Discovered — Unknown and
       // Rumored give away that *something* is there, but never its name.
       let html = poi.state === 'discovered'
-        ? `<div class="tooltip">${escapeHtml(poi.name)}${poi.locked ? ' 🔒' : ''}</div><div class="poi-mark">`
+        ? `<div class="tooltip">${escapeHtml(poi.name)}${poi.locked ? ' \u{1F512}' : ''}</div><div class="poi-mark">`
         : `<div class="poi-mark">`;
       if (poi.locked) html += `<span class="lock-badge">${ICONS.lock}</span>`;
 
       if (poi.state === 'unknown') {
         html += `<div class="poi-rumor" style="font-size:${20+visualScale*4.5}px;">?</div>`;
       } else if (poi.state === 'rumored') {
-        const iconMarkup = renderIconMarkup(poi, layer);
+        const iconMarkup = this._renderIconMarkup(poi, layer);
         html += `<div class="poi-rumor" style="font-size:${16+visualScale*3.5}px; margin-bottom:2px;">?</div>
                   <div class="poi-icon" style="width:${44*visualScale}px; height:${44*visualScale}px; opacity:0.35;">${iconMarkup}</div>`;
       } else if (poi.state === 'discovered') {
-        const iconMarkup = renderIconMarkup(poi, layer);
+        const iconMarkup = this._renderIconMarkup(poi, layer);
         html += `<div class="poi-icon" style="width:${44*visualScale}px; height:${44*visualScale}px;">${iconMarkup}</div>`;
       }
       html += `</div>`;
@@ -710,639 +1217,220 @@ function initDistantHorizonsUI(){
       if (draggable) {
         poiEl.addEventListener('mousedown', (e) => {
           e.stopPropagation();
-          poiDrag = { poi, startClientX: e.clientX, startClientY: e.clientY, startXPos: poi.xPos, startOffsetY: poi.offsetY };
+          this._poiDrag = { poi, startClientX: e.clientX, startClientY: e.clientY, startXPos: poi.xPos, startOffsetY: poi.offsetY };
         });
       }
 
       container.appendChild(poiEl);
     });
-    updateVisuals();
-    // Covers both direct POI edits and layer edits (initLayers() always
-    // calls renderPOIs() at its own end) — one debounced save point for
-    // almost every persistable mutation. See "Scene persistence + GM →
-    // player sync" below for what's actually shared vs. kept local.
-    scheduleSave();
+    this._updateVisuals();
+    // Covers both direct POI edits and layer edits — one debounced save
+    // point for almost every persistable mutation. See "Scene persistence
+    // + GM -> player sync" below for what's actually shared vs. kept local.
+    this._scheduleSave();
   }
 
-  // Pans the horizon so this POI's marker sits in the centre of the view,
-  // solved against its own layer's parallax speed and X-offset. Eases
-  // there over time instead of jump-cutting, so the GM/players can track
-  // where on the horizon they're being moved to.
-  let focusAnim = null;
-  function focusOnPoi(poi){
-    const layer = layerConfig.find(l => l.id === parseInt(poi.layer, 10));
+  _focusOnPoi(poi){
+    const layer = this.layerConfig.find(l => l.id === parseInt(poi.layer, 10));
     if (!layer) return;
-    const centerPx = horizonView.clientWidth / 2;
+    const horizonView = this.element.querySelector('#horizon-view');
+    const centerPx = (horizonView?.clientWidth || 0) / 2;
     const target = (poi.xPos + layer.xOffset - centerPx) / (layer.speed || 0.0001);
-    animatePanTo(target);
+    this._animatePanTo(target);
   }
 
-  function animatePanTo(targetScrollX, duration = 650){
-    if (focusAnim) cancelAnimationFrame(focusAnim.raf);
-    const startX = state.scrollX;
+  _animatePanTo(targetScrollX, duration = 650){
+    if (this._focusAnim) cancelAnimationFrame(this._focusAnim.raf);
+    const startX = this.state.scrollX;
     const delta = targetScrollX - startX;
-    if (Math.abs(delta) < 0.5) { state.scrollX = targetScrollX; updateVisuals(); return; }
+    if (Math.abs(delta) < 0.5) { this.state.scrollX = targetScrollX; this._updateVisuals(); return; }
     const startTime = performance.now();
     const easeInOutCubic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
-    focusAnim = { raf: 0 };
-    function step(now){
+    this._focusAnim = { raf: 0 };
+    const step = (now) => {
       const t = Math.min(1, (now - startTime) / duration);
-      state.scrollX = startX + delta * easeInOutCubic(t);
-      updateVisuals();
+      this.state.scrollX = startX + delta * easeInOutCubic(t);
+      this._updateVisuals();
       if (t < 1) {
-        focusAnim.raf = requestAnimationFrame(step);
+        this._focusAnim.raf = requestAnimationFrame(step);
       } else {
-        focusAnim = null;
+        this._focusAnim = null;
       }
-    }
-    focusAnim.raf = requestAnimationFrame(step);
+    };
+    this._focusAnim.raf = requestAnimationFrame(step);
   }
 
-  function updateVisuals(){
-    let rawDeg = (state.scrollX / 10) % 360;
+  _updateVisuals(){
+    const el = this.element;
+    if (!el) return;
+    let rawDeg = (this.state.scrollX / 10) % 360;
     if (rawDeg < 0) rawDeg += 360;
     const directions = ['N','NE','E','SE','S','SW','W','NW'];
     const dirIndex = Math.round(rawDeg / 45) % 8;
-    if (state.compassMode === 'simple') {
-      compassText.textContent = directions[dirIndex];
-    } else {
-      compassText.textContent = `${directions[dirIndex]} ${Math.round(rawDeg)}°`;
+    const compassText = el.querySelector('#compass-text');
+    if (compassText) {
+      compassText.textContent = this.state.compassMode === 'simple'
+        ? directions[dirIndex]
+        : `${directions[dirIndex]} ${Math.round(rawDeg)}°`;
     }
 
-    layerConfig.forEach(layer => {
+    this.layerConfig.forEach(layer => {
       if (!layer.enabled) return;
-      const bgEl = document.getElementById(`layer-bg-${layer.id}`);
+      const bgEl = el.querySelector(`#layer-bg-${layer.id}`);
       if (bgEl) {
-        const posX = `${-state.scrollX * layer.speed + layer.xOffset}px`;
+        const posX = `${-this.state.scrollX * layer.speed + layer.xOffset}px`;
         bgEl.style.backgroundPositionX = posX;
-        // Recoloured (masked) custom images are painted via mask-image,
-        // not background-image — panning has to move the mask position
-        // too, or the terrain shape just sits frozen while everything
-        // else scrolls past it.
         if (bgEl.classList.contains('masked-custom')) {
           bgEl.style.webkitMaskPositionX = posX;
           bgEl.style.maskPositionX = posX;
         }
         bgEl.style.transform = `translateY(${layer.yOffset}px)`;
       }
-      const fillEl = document.getElementById(`layer-fill-${layer.id}`);
-      if (fillEl) fillEl.style.height = `${fillerHeightFor(layer)}px`;
+      const fillEl = el.querySelector(`#layer-fill-${layer.id}`);
+      if (fillEl) fillEl.style.height = `${this._fillerHeightFor(layer)}px`;
     });
 
-    state.pois.forEach(poi => {
-      const poiEl = document.getElementById(`poi-${poi.id}`);
+    this.state.pois.forEach(poi => {
+      const poiEl = el.querySelector(`#poi-${poi.id}`);
       if (!poiEl) return;
-      const layer = layerConfig.find(l => l.id === parseInt(poi.layer, 10));
+      const layer = this.layerConfig.find(l => l.id === parseInt(poi.layer, 10));
       if (!layer) return;
-      // POIs pan at their own layer's parallax speed AND follow that
-      // layer's manual X/Y nudge, so they stay pinned to the terrain
-      // instead of drifting independently when a layer is offset.
-      const visualX = poi.xPos - (state.scrollX * layer.speed) + layer.xOffset;
+      const visualX = poi.xPos - (this.state.scrollX * layer.speed) + layer.xOffset;
       poiEl.style.transform = `translateX(${visualX}px) translateY(${layer.yOffset}px)`;
       poiEl.style.bottom = `${poi.offsetY}px`;
     });
   }
 
   /* ---------------- Horizon pan + POI free placement ---------------- */
-  const horizonView = document.getElementById('horizon-view');
-  let isPanning = false, panLastX = 0;
-  let poiDrag = null;
-
-  // Higher multiplier = the same physical drag covers more world-distance,
-  // so there's less scrolling needed to scan the whole horizon.
-  const HORIZON_LENGTH_MUL = { far: 1.5, medium: 2.4, close: 3.6 };
-  function panMultiplier(){ return HORIZON_LENGTH_MUL[state.horizonLength] || HORIZON_LENGTH_MUL.far; }
-
+  _panMultiplier(){ return HORIZON_LENGTH_MUL[this.state.horizonLength] || HORIZON_LENGTH_MUL.far; }
   // Lock View only restricts panning in Player view — the GM can always
   // scroll (e.g. to set up the shot) before locking it for the players.
-  function canPan(){ return !(state.viewLocked && state.viewMode === 'player'); }
+  _canPan(){ return !(this.state.viewLocked && this.state.viewMode === 'player'); }
 
-  horizonView.addEventListener('mousedown', (e) => {
-    if (!canPan()) return;
-    isPanning = true; panLastX = e.clientX; horizonView.classList.add('dragging');
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (poiDrag) {
-      const dx = e.clientX - poiDrag.startClientX;
-      const dy = e.clientY - poiDrag.startClientY;
-      poiDrag.poi.xPos = poiDrag.startXPos + dx;
-      poiDrag.poi.offsetY = poiDrag.startOffsetY - dy;
-      requestAnimationFrame(updateVisuals);
+  _startPan(e){
+    if (!this._canPan()) return;
+    this._isPanning = true; this._panLastX = e.clientX;
+    this.element.querySelector('#horizon-view')?.classList.add('dragging');
+  }
+  _startPanTouch(e){
+    if (!this._canPan()) return;
+    this._isPanning = true; this._panLastX = e.touches[0].clientX;
+  }
+  _handleWindowMouseMove(e){
+    if (this._poiDrag) {
+      const dx = e.clientX - this._poiDrag.startClientX;
+      const dy = e.clientY - this._poiDrag.startClientY;
+      this._poiDrag.poi.xPos = this._poiDrag.startXPos + dx;
+      this._poiDrag.poi.offsetY = this._poiDrag.startOffsetY - dy;
+      requestAnimationFrame(() => this._updateVisuals());
       return;
     }
-    if (!isPanning) return;
-    state.scrollX -= (e.clientX - panLastX) * panMultiplier();
-    panLastX = e.clientX;
-    requestAnimationFrame(updateVisuals);
-  });
-  window.addEventListener('mouseup', () => {
-    isPanning = false; horizonView.classList.remove('dragging');
+    if (this._winDrag) { this._onWindowDragMove(e); return; }
+    if (this._winResize) { this._onWindowResizeMove(e); return; }
+    if (this._freeDockDrag) { this._onFreeDockDragMove(e); return; }
+    if (!this._isPanning) return;
+    this.state.scrollX -= (e.clientX - this._panLastX) * this._panMultiplier();
+    this._panLastX = e.clientX;
+    requestAnimationFrame(() => this._updateVisuals());
+  }
+  _handleWindowMouseUp(){
+    this._isPanning = false;
+    this.element?.querySelector('#horizon-view')?.classList.remove('dragging');
     // A POI drag updates poi.xPos/offsetY directly every frame (via
-    // updateVisuals(), not renderPOIs()) so dragging stays smooth — but
-    // that means it never went through renderPOIs()'s scheduleSave()
+    // _updateVisuals(), not _renderPOIs()) so dragging stays smooth — but
+    // that means it never went through _renderPOIs()'s _scheduleSave()
     // call either, so the new position was never saved or pushed to
     // players. Save once here, when the drag actually ends.
-    const wasDraggingPoi = !!poiDrag;
-    poiDrag = null;
-    if (wasDraggingPoi) scheduleSave();
-  });
+    const wasDraggingPoi = !!this._poiDrag;
+    this._poiDrag = null;
+    if (wasDraggingPoi) this._scheduleSave();
 
-  horizonView.addEventListener('touchstart', (e) => {
-    if (!canPan()) return;
-    isPanning = true; panLastX = e.touches[0].clientX;
-  }, {passive:true});
-  window.addEventListener('touchmove', (e) => {
-    if (!isPanning) return;
-    state.scrollX -= (e.touches[0].clientX - panLastX) * panMultiplier();
-    panLastX = e.touches[0].clientX;
-    requestAnimationFrame(updateVisuals);
-  }, {passive:true});
-  window.addEventListener('touchend', () => { isPanning = false; });
-
-  /* ---------------- Layer rows ---------------- */
-  function renderLayerRows(){
-    layerRowsEl.innerHTML = '';
-    layerConfig.forEach(layer => {
-      const row = document.createElement('div');
-      row.className = 'layer-row' + (layer.enabled ? '' : ' disabled');
-
-      // A built-in preset (e.g. the default Forest images) is a plain
-      // biome choice — same dropdown as Mountains/Hills/Desert, no
-      // upload-only chrome. Only a genuine upload gets the image chip,
-      // clear/settings buttons and the tiling/tint toggles.
-      const isUpload = !!layer.customImage && !layer.customImageBuiltin;
-      const showImageSettings = isUpload && layer.imageSettingsOpen;
-      const sourceHtml = isUpload
-        ? `<span class="img-chip" title="${STORAGE.layersUpload}${layer.customImageName || ''}">🖼 ${escapeHtml(layer.customImageName || 'custom')}</span>
-           ${!showImageSettings ? `<button class="icon-btn small image-settings-btn" title="Tiling &amp; tint options">${ICONS.sliders}</button>` : ''}
-           <button class="icon-btn small clear-image-btn" title="Revert to procedural biome">${ICONS.clear}</button>`
-        : `<select class="layer-biome">${biomeOptionsHtml(layer.biome)}</select>`;
-
-      row.innerHTML = `
-        <div class="layer-row-top">
-          <input type="checkbox" class="layer-enable" ${layer.enabled ? 'checked' : ''} title="Toggle layer ${layer.id}">
-          <span class="idx">${layer.id}</span>
-          <span class="swatch" style="background:${layer.color};"></span>
-          <div class="layer-source">${sourceHtml}</div>
-          <button class="icon-btn small upload-image-btn" title="Upload a custom image for this layer — stored via Foundry's FilePicker under ${STORAGE.layersUpload}">${ICONS.upload}</button>
-          <input type="file" accept="image/*" class="layer-file-input" hidden>
-        </div>
-        ${showImageSettings ? `
-        <label class="mirror-tile-row">
-          <input type="checkbox" class="layer-mirror-tile" ${layer.mirrorTile ? 'checked' : ''}>
-          Seamless mirror tiling <span class="hint">— guarantees a seam-free loop for any image</span>
-        </label>
-        <label class="mirror-tile-row">
-          <input type="checkbox" class="layer-tint" ${layer.tintToColor !== false ? 'checked' : ''}>
-          Tint to layer colour <span class="hint">— off keeps the image's own colours (for full-colour art)</span>
-        </label>
-        <button class="btn small apply-image-settings-btn" style="align-self:flex-start; margin-left:16px;">${ICONS.check} Apply</button>` : ''}
-        <div class="offset-row">
-          <span class="axis-label">Y</span>
-          <input type="range" class="layer-offset-y" min="-140" max="140" value="${layer.yOffset}">
-          <span class="val">${layer.yOffset}px</span>
-        </div>
-        <div class="offset-row">
-          <span class="axis-label">X</span>
-          <input type="range" class="layer-offset-x" min="-200" max="200" value="${layer.xOffset}">
-          <span class="val">${layer.xOffset}px</span>
-        </div>`;
-      layerRowsEl.appendChild(row);
-
-      row.querySelector('.layer-enable').addEventListener('change', (e) => {
-        layer.enabled = e.target.checked;
-        row.classList.toggle('disabled', !layer.enabled);
-        initLayers();
-      });
-      const biomeSel = row.querySelector('.layer-biome');
-      if (biomeSel) biomeSel.addEventListener('change', (e) => {
-        applyBiomeOrImage(layer, e.target.value, () => { renderLayerRows(); initLayers(); });
-      });
-
-      const clearBtn = row.querySelector('.clear-image-btn');
-      if (clearBtn) clearBtn.addEventListener('click', () => {
-        layer.customImage = null; layer.customImageName = null; layer.customImageRaw = null;
-        layer.customImageDims = null;
-        layer.imageSettingsOpen = false;
-        // Forest has no procedural fallback (it's image-only), so clearing
-        // an image-based layer needs a real biome to land on.
-        if (!layer.biome || layer.biome.startsWith('img:')) layer.biome = 'mountains-1';
-        renderLayerRows(); initLayers();
-      });
-
-      const imgSettingsBtn = row.querySelector('.image-settings-btn');
-      if (imgSettingsBtn) imgSettingsBtn.addEventListener('click', () => {
-        layer.imageSettingsOpen = true;
-        renderLayerRows();
-      });
-
-      const applyBtn = row.querySelector('.apply-image-settings-btn');
-      if (applyBtn) applyBtn.addEventListener('click', () => {
-        layer.imageSettingsOpen = false;
-        renderLayerRows();
-      });
-
-      row.querySelector('.upload-image-btn').addEventListener('click', () => row.querySelector('.layer-file-input').click());
-      row.querySelector('.layer-file-input').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        readImageFile(file, (dataUrl) => {
-          layer.customImageRaw = dataUrl; layer.customImageName = file.name;
-          if (layer.mirrorTile === undefined) layer.mirrorTile = true;
-          if (layer.tintToColor === undefined) layer.tintToColor = true;
-          layer.imageSettingsOpen = true;
-          layer.customImageBuiltin = false;
-          processCustomImage(layer, (finalUrl, dims) => {
-            layer.customImage = finalUrl;
-            layer.customImageDims = dims;
-            renderLayerRows(); initLayers();
-          });
-        });
-      });
-
-      const tintChk = row.querySelector('.layer-tint');
-      if (tintChk) tintChk.addEventListener('change', () => {
-        layer.tintToColor = tintChk.checked;
-        initLayers();
-      });
-
-      const mirrorChk = row.querySelector('.layer-mirror-tile');
-      if (mirrorChk) mirrorChk.addEventListener('change', () => {
-        layer.mirrorTile = mirrorChk.checked;
-        processCustomImage(layer, (finalUrl, dims) => {
-          layer.customImage = finalUrl;
-          layer.customImageDims = dims;
-          initLayers();
-        });
-      });
-
-      row.querySelector('.layer-offset-y').addEventListener('input', (e) => {
-        layer.yOffset = parseInt(e.target.value, 10);
-        row.querySelector('.offset-row:nth-of-type(2) .val').textContent = `${layer.yOffset}px`;
-        requestAnimationFrame(updateVisuals);
-      });
-      row.querySelector('.layer-offset-x').addEventListener('input', (e) => {
-        layer.xOffset = parseInt(e.target.value, 10);
-        row.querySelector('.offset-row:nth-of-type(3) .val').textContent = `${layer.xOffset}px`;
-        requestAnimationFrame(updateVisuals);
-      });
-    });
+    if (this._winDrag) this._endWindowDrag();
+    if (this._winResize) this._endWindowResize();
+    if (this._freeDockDrag) this._endFreeDockDrag();
+  }
+  _handleWindowTouchMove(e){
+    if (!this._isPanning) return;
+    this.state.scrollX -= (e.touches[0].clientX - this._panLastX) * this._panMultiplier();
+    this._panLastX = e.touches[0].clientX;
+    requestAnimationFrame(() => this._updateVisuals());
   }
 
-  const quickBiomeSelect = document.getElementById('quick-biome-select');
-  quickBiomeSelect.innerHTML = biomeOptionsHtml('mountains-1');
-  document.getElementById('quick-biome-apply').addEventListener('click', () => {
-    const b = quickBiomeSelect.value;
-    let remaining = layerConfig.length;
-    const done = () => { remaining--; if (remaining <= 0) { renderLayerRows(); initLayers(); } };
-    layerConfig.forEach(l => applyBiomeOrImage(l, b, done));
-  });
-
-  /* ---------------- POI table ---------------- */
-  const stateLabels = { hidden:'Hidden', unknown:'Unknown', rumored:'Rumored', discovered:'Discovered' };
-  const stateOrder = ['hidden','unknown','rumored','discovered'];
-
-  function poiIconOptionsHtml(selected){
-    return Object.keys(ICON_LABELS).map(k => `<option value="${k}" ${k===selected?'selected':''}>${ICON_LABELS[k]}</option>`).join('');
+  /* ---------------- Window drag / resize (undocked only) ----------------
+     Bespoke titlebar, so this is hand-rolled rather than handed to
+     ApplicationV2's own header-drag — but position bookkeeping still goes
+     through this.setPosition() rather than raw element.style writes,
+     keeping this.position accurate for anything else that reads it. */
+  _startWindowDrag(e){
+    if (this.state.compactMode) return;
+    this._closeSettings();
+    const rect = this.element.getBoundingClientRect();
+    this._winDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
+    this.element.classList.add('dragging');
   }
-
-  function renderPoiTable(){
-    poiListEl.innerHTML = '';
-    if (!state.pois.length) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 6;
-      td.style.cssText = 'padding:18px 7px; text-align:center; color:var(--parchment-dim); font-size:11.5px;';
-      td.textContent = 'No points of interest yet — click "+ Add POI" to place one.';
-      tr.appendChild(td);
-      poiListEl.appendChild(tr);
-    }
-    state.pois.forEach(poi => {
-      const tr = document.createElement('tr');
-      if (poi.locked) tr.classList.add('locked');
-
-      const tdName = document.createElement('td');
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text'; nameInput.className = 'poi-name-input'; nameInput.value = poi.name;
-      nameInput.addEventListener('change', () => { poi.name = nameInput.value; renderPOIs(); });
-      tdName.appendChild(nameInput);
-
-      const tdIcon = document.createElement('td');
-      const iconField = document.createElement('div');
-      iconField.className = 'poi-icon-field';
-      iconField.innerHTML = poi.customIcon
-        ? `<span class="img-chip" title="${STORAGE.poisUpload}">🖼 custom</span>
-           <button class="icon-btn small clear-icon-btn" title="Revert to a generic icon">${ICONS.clear}</button>`
-        : `<select class="poi-icon-select">${poiIconOptionsHtml(poi.icon)}</select>`;
-      iconField.innerHTML += `<button class="icon-btn small upload-icon-btn" title="Upload a custom image for this POI — stored via Foundry's FilePicker under ${STORAGE.poisUpload}">${ICONS.upload}</button>
-        <input type="file" accept="image/*" class="poi-icon-file" hidden>`;
-      tdIcon.appendChild(iconField);
-
-      const iconSel = iconField.querySelector('.poi-icon-select');
-      if (iconSel) iconSel.addEventListener('change', () => { poi.icon = iconSel.value; poi.customIcon = null; renderPOIs(); renderPoiTable(); });
-      const clearIconBtn = iconField.querySelector('.clear-icon-btn');
-      if (clearIconBtn) clearIconBtn.addEventListener('click', () => { poi.customIcon = null; renderPOIs(); renderPoiTable(); });
-      iconField.querySelector('.upload-icon-btn').addEventListener('click', () => iconField.querySelector('.poi-icon-file').click());
-      iconField.querySelector('.poi-icon-file').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        readImageFile(file, (dataUrl) => { poi.customIcon = dataUrl; renderPOIs(); renderPoiTable(); });
-      });
-
-      const tdLayer = document.createElement('td');
-      const layerSel = document.createElement('select');
-      layerConfig.forEach(l => {
-        const opt = document.createElement('option');
-        opt.value = l.id; opt.textContent = `L${l.id}`;
-        if (poi.layer == l.id) opt.selected = true;
-        layerSel.appendChild(opt);
-      });
-      layerSel.addEventListener('change', () => {
-        // Keep the POI exactly where it visually is on screen — reassigning
-        // a layer shouldn't teleport it, just change which terrain it's
-        // pinned to (different pan speed / colour / Y-offset).
-        const oldLayer = layerConfig.find(l => l.id === poi.layer);
-        const newLayerId = parseInt(layerSel.value, 10);
-        const newLayer = layerConfig.find(l => l.id === newLayerId);
-        if (oldLayer && newLayer) {
-          const visualX = poi.xPos - (state.scrollX * oldLayer.speed) + oldLayer.xOffset;
-          poi.xPos = visualX + (state.scrollX * newLayer.speed) - newLayer.xOffset;
-          poi.offsetY = poi.offsetY - oldLayer.yOffset + newLayer.yOffset;
-        }
-        poi.layer = newLayerId;
-        renderPOIs();
-      });
-      tdLayer.appendChild(layerSel);
-
-      const tdSize = document.createElement('td');
-      const sizeSel = document.createElement('select');
-      sizeSel.className = 'size-sel';
-      sizeSel.title = 'Icon size';
-      [['small','S'],['medium','M'],['large','L']].forEach(([val,label]) => {
-        const opt = document.createElement('option');
-        opt.value = val; opt.textContent = label;
-        if ((poi.size || 'large') === val) opt.selected = true;
-        sizeSel.appendChild(opt);
-      });
-      sizeSel.addEventListener('change', () => { poi.size = sizeSel.value; renderPOIs(); });
-      tdSize.appendChild(sizeSel);
-
-      const tdState = document.createElement('td');
-      const stateSel = document.createElement('select');
-      stateOrder.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s; opt.textContent = stateLabels[s];
-        if (poi.state === s) opt.selected = true;
-        stateSel.appendChild(opt);
-      });
-      stateSel.addEventListener('change', () => { poi.state = stateSel.value; renderPOIs(); });
-      tdState.appendChild(stateSel);
-
-      const tdActions = document.createElement('td');
-      tdActions.className = 'actions-cell';
-
-      const focusBtn = document.createElement('button');
-      focusBtn.className = 'icon-btn'; focusBtn.title = 'Centre horizon on this POI';
-      focusBtn.innerHTML = ICONS.eye;
-      focusBtn.addEventListener('click', () => focusOnPoi(poi));
-
-      const lockBtn = document.createElement('button');
-      lockBtn.className = 'icon-btn' + (poi.locked ? ' lock-on' : '');
-      lockBtn.title = poi.locked ? 'Unlock position' : 'Lock position';
-      lockBtn.innerHTML = poi.locked ? ICONS.lock : ICONS.unlock;
-      lockBtn.addEventListener('click', () => { poi.locked = !poi.locked; renderPOIs(); renderPoiTable(); });
-
-      const delBtn = document.createElement('button');
-      delBtn.className = 'icon-btn danger'; delBtn.title = 'Delete POI';
-      delBtn.innerHTML = ICONS.trash;
-      delBtn.addEventListener('click', () => {
-        state.pois = state.pois.filter(p => p.id !== poi.id);
-        renderPOIs(); renderPoiTable();
-      });
-
-      tdActions.appendChild(focusBtn); tdActions.appendChild(lockBtn); tdActions.appendChild(delBtn);
-
-      tr.appendChild(tdName); tr.appendChild(tdIcon); tr.appendChild(tdLayer); tr.appendChild(tdSize); tr.appendChild(tdState); tr.appendChild(tdActions);
-      poiListEl.appendChild(tr);
-    });
-  }
-
-  document.getElementById('add-poi-btn').addEventListener('click', () => {
-    const icons = Object.keys(ICON_LABELS);
-    const firstEnabled = layerConfig.find(l => l.enabled) || layerConfig[3];
-    state.pois.push({
-      id: state.nextPoiId++,
-      name: "New Location",
-      layer: firstEnabled.id,
-      xPos: state.scrollX + 300,
-      offsetY: defaultOffsetYForLayer(firstEnabled.id),
-      state: "rumored",
-      size: "large",
-      icon: icons[Math.floor(Math.random()*icons.length)],
-      customIcon: null,
-      locked: false
-    });
-    renderPOIs(); renderPoiTable();
-  });
-
-  /* ---------------- GM / Player toggle ---------------- */
-  const viewToggle = document.getElementById('view-toggle');
-  const subtitleEl = document.getElementById('dh-subtitle');
-  viewToggle.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-mode]');
-    if (!btn) return;
-    state.viewMode = btn.dataset.mode;
-    viewToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-    dhWindow.classList.toggle('player', state.viewMode === 'player');
-    settingsPanel.classList.toggle('player-mode', state.viewMode === 'player');
-    applyLockView();
-    renderPOIs();
-  });
-
-  /* ---------------- Lock View (blocks player panning) ---------------- */
-  const lockViewBtn = document.getElementById('lock-view-btn');
-  function applyLockView(){
-    lockViewBtn.innerHTML = state.viewLocked ? ICONS.lock : ICONS.unlock;
-    lockViewBtn.classList.toggle('active', state.viewLocked);
-    lockViewBtn.title = state.viewLocked
-      ? 'View locked — players can\'t scroll. Click to unlock.'
-      : 'Lock view (stop players scrolling)';
-    horizonView.classList.toggle('view-locked', state.viewLocked && state.viewMode === 'player');
-    updateSubtitle();
-  }
-  lockViewBtn.addEventListener('click', () => {
-    state.viewLocked = !state.viewLocked;
-    applyLockView();
-    scheduleSave();
-  });
-
-  function updateSubtitle(){
-    const modeText = state.viewMode === 'gm' ? 'GM view' : 'Player view';
-    const lockText = state.viewLocked ? ' · view locked' : '';
-    subtitleEl.textContent = modeText + lockText + ' · double-click to dock';
-  }
-  applyLockView();
-
-  /* ---------------- Day / Night toggle ---------------- */
-  const daytimeToggle = document.getElementById('daytime-toggle');
-  const horizonWrapEl = document.getElementById('horizon-wrap');
-  const dayBtn = daytimeToggle.querySelector('button[data-time="day"]');
-  const nightBtn = daytimeToggle.querySelector('button[data-time="night"]');
-  dayBtn.innerHTML = ICONS.sun;
-  nightBtn.innerHTML = ICONS.moon;
-  function applyDaytime(){
-    horizonWrapEl.classList.toggle('night', state.daytime === 'night');
-    container.classList.toggle('night', state.daytime === 'night');
-    dayBtn.classList.toggle('active', state.daytime === 'day');
-    nightBtn.classList.toggle('active', state.daytime === 'night');
-  }
-  daytimeToggle.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-time]');
-    if (!btn) return;
-    state.daytime = btn.dataset.time;
-    applyDaytime();
-    scheduleSave();
-  });
-  applyDaytime();
-
-  /* ---------------- Settings menu (body-level, positioned in JS) ---------------- */
-  const cogBtn = document.getElementById('cog-btn');
-  const settingsPanel = document.getElementById('dh-settings');
-  const compassOpacityRow = document.getElementById('compass-opacity-row');
-
-  function positionSettings(){
-    const r = cogBtn.getBoundingClientRect();
-    const width = 250;
-    let left = r.right - width;
-    left = Math.max(8, Math.min(window.innerWidth - width - 8, left));
-    let top = r.bottom + 6;
-    settingsPanel.style.left = left + 'px';
-    settingsPanel.style.top = top + 'px';
-  }
-  function openSettings(){ positionSettings(); settingsPanel.hidden = false; cogBtn.classList.add('active'); }
-  function closeSettings(){ settingsPanel.hidden = true; cogBtn.classList.remove('active'); }
-  cogBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    settingsPanel.hidden ? openSettings() : closeSettings();
-  });
-  document.addEventListener('click', (e) => {
-    if (!settingsPanel.hidden && !settingsPanel.contains(e.target) && e.target !== cogBtn) closeSettings();
-  });
-  window.addEventListener('resize', () => { if (!settingsPanel.hidden) positionSettings(); });
-
-  /* ---------------- Layers info popup (body-level, positioned in JS) ---------------- */
-  const layersInfoBtn = document.getElementById('layers-info-btn');
-  const layersInfoPopup = document.getElementById('layers-info-popup');
-  function positionLayersInfo(){
-    const r = layersInfoBtn.getBoundingClientRect();
-    const width = 280;
-    let left = r.left;
-    left = Math.max(8, Math.min(window.innerWidth - width - 8, left));
-    let top = r.bottom + 6;
-    layersInfoPopup.style.left = left + 'px';
-    layersInfoPopup.style.top = top + 'px';
-  }
-  function openLayersInfo(){ positionLayersInfo(); layersInfoPopup.hidden = false; layersInfoBtn.classList.add('active'); }
-  function closeLayersInfo(){ layersInfoPopup.hidden = true; layersInfoBtn.classList.remove('active'); }
-  layersInfoBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    layersInfoPopup.hidden ? openLayersInfo() : closeLayersInfo();
-  });
-  document.addEventListener('click', (e) => {
-    if (!layersInfoPopup.hidden && !layersInfoPopup.contains(e.target) && e.target !== layersInfoBtn) closeLayersInfo();
-  });
-  window.addEventListener('resize', () => { if (!layersInfoPopup.hidden) positionLayersInfo(); });
-
-  document.getElementById('opt-compass-mode').addEventListener('change', (e) => {
-    state.compassMode = e.target.value;
-    compassHud.hidden = state.compassMode === 'off';
-    compassOpacityRow.style.display = state.compassMode === 'off' ? 'none' : 'flex';
-    updateVisuals();
-  });
-  document.getElementById('opt-compass-opacity').addEventListener('input', (e) => {
-    state.compassOpacity = parseInt(e.target.value, 10) / 100;
-    compassHud.style.setProperty('--compass-opacity', state.compassOpacity);
-  });
-  document.getElementById('opt-draghint').addEventListener('change', (e) => {
-    state.showDragHint = e.target.checked;
-    dragHintEl.hidden = !state.showDragHint;
-  });
-  document.getElementById('opt-fullcolour').addEventListener('change', (e) => {
-    state.fullColourIcons = e.target.checked;
-    renderPOIs();
-  });
-  document.getElementById('opt-palette').addEventListener('change', (e) => {
-    applyPalette(e.target.value);
-    // A deliberate GM push — see "Scene persistence + GM → player sync"
-    // further down. Takes over for everyone, including a player who'd
-    // picked their own palette since the GM's last push.
-    pushPaletteIfGm();
-  });
-
-  const HORIZON_LENGTH_DESC = {
-    far: 'Full-length horizon — more dragging to scan the whole view.',
-    medium: 'Balanced — a middle ground between range and reach.',
-    close: 'Short horizon — reach any point with minimal dragging.'
-  };
-  document.getElementById('opt-horizon-length').addEventListener('change', (e) => {
-    state.horizonLength = e.target.value;
-    document.getElementById('horizon-length-desc').textContent = HORIZON_LENGTH_DESC[state.horizonLength];
-    scheduleSave();
-  });
-
-  /* ---------------- Window drag ---------------- */
-  const draghandle = document.getElementById('dh-draghandle');
-  let winDrag = null;
-
-  draghandle.addEventListener('mousedown', (e) => {
-    if (state.compactMode) return;
-    closeSettings();
-    const rect = dhWindow.getBoundingClientRect();
-    winDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
-    dhWindow.classList.add('dragging');
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!winDrag) return;
-    const dx = e.clientX - winDrag.startClientX;
-    const dy = e.clientY - winDrag.startClientY;
-    let left = winDrag.startLeft + dx;
-    let top = winDrag.startTop + dy;
-    const rect = dhWindow.getBoundingClientRect();
+  _onWindowDragMove(e){
+    const dx = e.clientX - this._winDrag.startClientX;
+    const dy = e.clientY - this._winDrag.startClientY;
+    let left = this._winDrag.startLeft + dx;
+    let top = this._winDrag.startTop + dy;
+    const rect = this.element.getBoundingClientRect();
     left = Math.max(4, Math.min(window.innerWidth - rect.width - 4, left));
     top = Math.max(4, Math.min(window.innerHeight - 40, top));
-    dhWindow.style.left = left + 'px';
-    dhWindow.style.top = top + 'px';
-  });
-  window.addEventListener('mouseup', () => { winDrag = null; dhWindow.classList.remove('dragging'); });
+    this.setPosition({ left, top });
+  }
+  _endWindowDrag(){
+    this._winDrag = null;
+    this.element.classList.remove('dragging');
+  }
 
-  /* ---------------- Compact dock mode ---------------- */
-  let savedRect = null;
-  let compactPositionTimer = null;
+  _startWindowResize(e){
+    if (this.state.compactMode) return;
+    e.stopPropagation();
+    e.preventDefault();
+    this._closeSettings();
+    const rect = this.element.getBoundingClientRect();
+    this._winResize = { startClientX: e.clientX, startClientY: e.clientY, startWidth: rect.width, startHeight: rect.height };
+  }
+  _onWindowResizeMove(e){
+    const dx = e.clientX - this._winResize.startClientX;
+    const dy = e.clientY - this._winResize.startClientY;
+    const maxWidth = window.innerWidth - 8;
+    const maxHeight = window.innerHeight - 8;
+    const newWidth = Math.max(this._minWinWidth, Math.min(maxWidth, this._winResize.startWidth + dx));
+    const newHeight = Math.max(this._minWinHeight, Math.min(maxHeight, this._winResize.startHeight + dy));
+    this.setPosition({ width: newWidth, height: newHeight });
+  }
+  _endWindowResize(){ this._winResize = null; }
 
-  // Docked mode used to just span the full viewport width flush to the
-  // bottom (left:0/right:0/bottom:0), which put it behind Foundry's own
-  // scene-controls column, sidebar and hotbar rather than sitting above
-  // them. This measures Foundry's real UI chrome and insets the docked
-  // strip to fit the gap between the side columns and above the hotbar
-  // instead. It looks for Foundry's standard element ids (#ui-left,
-  // #sidebar — #ui-right on older versions — and #hotbar); if none of
-  // them exist (e.g. this file previewed on its own, outside Foundry)
-  // it leaves the CSS fallback inset in place.
-  //
-  // Foundry v13 restructured these landmarks: #ui-left is no longer the
-  // narrow toolbar itself but a much wider layout wrapper around several
-  // columns (scene controls + scene navigation), and #sidebar collapses
-  // to zero width until a tab is expanded (the visible strip is then a
-  // child element, #sidebar-tabs / #sidebar-content). Trusting the
-  // landmark element's OWN bounding box — as v11/v12 required — grossly
-  // overshoots on v13 (e.g. ~960px instead of the real ~72px toolbar),
-  // which is what caused the docked strip to collapse to zero width and
-  // land dead-centre on screen. Measuring the widest/narrowest edge among
-  // the landmark's own VISIBLE children instead tracks whatever is
-  // actually painted on any version — including v11/v12, where the
-  // landmark itself has no meaningful children and this simply falls
-  // back to its own rect.
-  function visibleRightEdge(el){
+  _captureMinWindowSize(){
+    const rect = this.element.getBoundingClientRect();
+    this._minWinWidth = rect.width;
+    this._minWinHeight = rect.height;
+  }
+
+  _resetWindowPosition(){
+    this.element.style.height = '';
+    this.setPosition(this._computeDefaultPosition());
+    this._closeSettings();
+  }
+
+  /* ---------------- Compact dock mode ----------------
+     Docked mode used to just span the full viewport width flush to the
+     bottom, which put it behind Foundry's own scene-controls column,
+     sidebar and hotbar rather than sitting above them. This measures
+     Foundry's real UI chrome and insets the docked strip to fit the gap
+     between the side columns and above the hotbar instead. It looks for
+     Foundry's standard element ids (#ui-left, #sidebar — #ui-right on
+     older versions — and #hotbar); if none of them exist it leaves the
+     CSS fallback inset in place.
+
+     Foundry v13 restructured these landmarks: #ui-left is no longer the
+     narrow toolbar itself but a much wider layout wrapper, and #sidebar
+     collapses to zero width until a tab is expanded. Trusting the
+     landmark element's OWN bounding box grossly overshoots on v13.
+     Measuring the widest/narrowest edge among the landmark's own VISIBLE
+     children instead tracks whatever is actually painted on any version. */
+  _visibleRightEdge(el){
     if (!el) return null;
     const kids = Array.from(el.children).filter(c => {
       const r = c.getBoundingClientRect();
@@ -1352,7 +1440,7 @@ function initDistantHorizonsUI(){
     const rect = el.getBoundingClientRect();
     return (rect.width > 0 && rect.height > 0) ? rect.right : null;
   }
-  function visibleLeftEdge(el){
+  _visibleLeftEdge(el){
     if (!el) return null;
     const kids = Array.from(el.children).filter(c => {
       const r = c.getBoundingClientRect();
@@ -1362,27 +1450,16 @@ function initDistantHorizonsUI(){
     const rect = el.getBoundingClientRect();
     return (rect.width > 0 && rect.height > 0) ? rect.left : null;
   }
-  // Shared by positionCompactDock() and applyFreeDockPosition()'s initial
-  // seed — works out the symmetric inset and the bottom clearance above
-  // the hotbar from Foundry's current UI chrome. Returns nulls for
-  // anything it can't measure so callers can fall back sensibly.
-  function measureDockGeometry(){
+  _measureDockGeometry(){
     const margin = 12;
     const leftEl = document.getElementById('ui-left');
     const rightEl = document.getElementById('sidebar') || document.getElementById('ui-right');
     const hotbarEl = document.getElementById('hotbar');
 
-    // Foundry's left toolbar and right sidebar are very different widths,
-    // so docking flush against each one individually left the strip
-    // looking visibly off-centre. Instead, work out how much space EACH
-    // side actually needs, then reserve the larger of the two on BOTH
-    // sides — that keeps the strip truly centred and leaves the same
-    // breathing room on the narrower side that the wider one naturally
-    // has, so another module's own toolbar buttons or panel have room too.
     let leftNeeded = margin, rightNeeded = margin;
-    const leftEdge = visibleRightEdge(leftEl);
+    const leftEdge = this._visibleRightEdge(leftEl);
     if (leftEdge !== null) leftNeeded = leftEdge + margin;
-    const rightEdge = visibleLeftEdge(rightEl);
+    const rightEdge = this._visibleLeftEdge(rightEl);
     if (rightEdge !== null) rightNeeded = Math.max(0, window.innerWidth - rightEdge) + margin;
     const inset = Math.max(leftNeeded, rightNeeded);
 
@@ -1393,219 +1470,110 @@ function initDistantHorizonsUI(){
     }
     return { inset, bottom };
   }
-
-  function positionCompactDock(){
-    if (!state.compactMode || state.freeDock) return;
-    const { inset, bottom } = measureDockGeometry();
-    dhWindow.style.left = `${inset}px`;
-    dhWindow.style.right = `${inset}px`;
-    if (bottom !== null) dhWindow.style.bottom = `${bottom}px`;
+  _positionCompactDock(){
+    if (!this.state.compactMode || this.state.freeDock) return;
+    const { inset, bottom } = this._measureDockGeometry();
+    const el = this.element;
+    el.style.left = `${inset}px`;
+    el.style.right = `${inset}px`;
+    if (bottom !== null) el.style.bottom = `${bottom}px`;
   }
 
   /* ---------------- Free Dock (drag the docked strip anywhere, per-browser) ---------------- */
-  function clampFreeDockX(x){
-    const w = dhWindow.getBoundingClientRect().width || Math.min(820, window.innerWidth * 0.94);
+  _clampFreeDockX(x){
+    const w = this.element.getBoundingClientRect().width || Math.min(820, window.innerWidth * 0.94);
     return Math.max(0, Math.min(window.innerWidth - w, x));
   }
-  function clampFreeDockY(y){
-    const h = dhWindow.getBoundingClientRect().height || 158;
+  _clampFreeDockY(y){
+    const h = this.element.getBoundingClientRect().height || 158;
     return Math.max(0, Math.min(window.innerHeight - h, y));
   }
-  function applyFreeDockPosition(){
+  _applyFreeDockPosition(){
+    const el = this.element;
     const saved = game.settings.get(MODULE_ID, 'freeDockPos');
     if (saved && typeof saved.left === 'number' && typeof saved.top === 'number') {
-      dhWindow.style.setProperty('--free-dock-left', `${clampFreeDockX(saved.left)}px`);
-      dhWindow.style.setProperty('--free-dock-top', `${clampFreeDockY(saved.top)}px`);
+      el.style.setProperty('--free-dock-left', `${this._clampFreeDockX(saved.left)}px`);
+      el.style.setProperty('--free-dock-top', `${this._clampFreeDockY(saved.top)}px`);
       return;
     }
     // First time Free Dock is turned on: seed it from wherever the
-    // auto-centred dock currently sits (recomputed directly here, since
-    // positionCompactDock() itself no-ops once state.freeDock is true),
-    // so the strip doesn't jump the moment the toggle is flipped.
-    const geo = measureDockGeometry();
+    // auto-centred dock currently sits, so the strip doesn't jump the
+    // moment the toggle is flipped.
+    const geo = this._measureDockGeometry();
     const inset = geo.inset;
     const bottom = geo.bottom !== null ? geo.bottom : 60;
-    const height = dhWindow.getBoundingClientRect().height || 158;
+    const height = el.getBoundingClientRect().height || 158;
     const left = inset;
     const top = window.innerHeight - bottom - height;
-    dhWindow.style.setProperty('--free-dock-left', `${clampFreeDockX(left)}px`);
-    dhWindow.style.setProperty('--free-dock-top', `${clampFreeDockY(top)}px`);
+    el.style.setProperty('--free-dock-left', `${this._clampFreeDockX(left)}px`);
+    el.style.setProperty('--free-dock-top', `${this._clampFreeDockY(top)}px`);
   }
-
-  const freeDockHandle = document.getElementById('dh-free-dock-handle');
-  let freeDockDrag = null;
-  freeDockHandle.addEventListener('mousedown', (e) => {
-    if (!state.compactMode || !state.freeDock) return;
+  _startFreeDockDrag(e){
+    if (!this.state.compactMode || !this.state.freeDock) return;
     e.stopPropagation();
     e.preventDefault();
-    const rect = dhWindow.getBoundingClientRect();
-    freeDockDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!freeDockDrag) return;
-    const dx = e.clientX - freeDockDrag.startClientX;
-    const dy = e.clientY - freeDockDrag.startClientY;
-    const left = clampFreeDockX(freeDockDrag.startLeft + dx);
-    const top = clampFreeDockY(freeDockDrag.startTop + dy);
-    dhWindow.style.setProperty('--free-dock-left', `${left}px`);
-    dhWindow.style.setProperty('--free-dock-top', `${top}px`);
-  });
-  window.addEventListener('mouseup', () => {
-    if (!freeDockDrag) return;
-    const rect = dhWindow.getBoundingClientRect();
+    const rect = this.element.getBoundingClientRect();
+    this._freeDockDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
+  }
+  _onFreeDockDragMove(e){
+    const dx = e.clientX - this._freeDockDrag.startClientX;
+    const dy = e.clientY - this._freeDockDrag.startClientY;
+    const left = this._clampFreeDockX(this._freeDockDrag.startLeft + dx);
+    const top = this._clampFreeDockY(this._freeDockDrag.startTop + dy);
+    this.element.style.setProperty('--free-dock-left', `${left}px`);
+    this.element.style.setProperty('--free-dock-top', `${top}px`);
+  }
+  _endFreeDockDrag(){
+    const rect = this.element.getBoundingClientRect();
     game.settings.set(MODULE_ID, 'freeDockPos', { left: rect.left, top: rect.top });
-    freeDockDrag = null;
-  });
+    this._freeDockDrag = null;
+  }
 
-  const freeDockChk = document.getElementById('opt-free-dock');
-  freeDockChk.checked = state.freeDock;
-  freeDockChk.addEventListener('change', (e) => {
-    state.freeDock = e.target.checked;
-    game.settings.set(MODULE_ID, 'freeDockEnabled', state.freeDock);
-    dhWindow.classList.toggle('free-dock', state.freeDock);
-    if (state.compactMode) {
-      if (state.freeDock) {
-        applyFreeDockPosition();
-      } else {
-        dhWindow.style.removeProperty('--free-dock-left');
-        dhWindow.style.removeProperty('--free-dock-top');
-        positionCompactDock();
-      }
-    }
-  });
-
-  function enterCompact(){
-    if (state.compactMode) return;
-    savedRect = {
-      left: dhWindow.style.left, top: dhWindow.style.top,
-      // Capture the resize handle's explicit size too (undocked-only —
-      // it never applies while compact), so it can be restored on exit.
-      width: dhWindow.style.width, height: dhWindow.style.height
+  _enterCompact(){
+    if (this.state.compactMode) return;
+    const el = this.element;
+    this._savedRect = {
+      left: el.style.left, top: el.style.top,
+      width: el.style.width, height: el.style.height
     };
-    state.compactMode = true;
-    dhWindow.classList.add('compact');
-    dhWindow.classList.toggle('free-dock', state.freeDock);
-    dhWindow.style.left = ''; // clear any stale inline left from free-dragging so the CSS fallback can apply if #ui-left isn't found
-    // Clear any explicit width/height left over from resizing the window
-    // while undocked — the docked strip has its own fixed, auto-sized
-    // dimensions (driven by .compact's CSS + the collapsed horizon
-    // height), and an inline size from a prior resize would otherwise
-    // override that (inline styles beat non-!important CSS), pinning the
-    // "docked" strip at whatever size it happened to be resized to
-    // instead of collapsing to the slim bottom-hugging strip.
-    dhWindow.style.width = '';
-    dhWindow.style.height = '';
-    refreshCustomImageSizes();
-    if (state.freeDock) {
-      applyFreeDockPosition();
-    } else {
-      positionCompactDock();
-    }
+    this.state.compactMode = true;
+    el.classList.add('compact');
+    el.classList.toggle('free-dock', this.state.freeDock);
+    el.style.left = ''; // clear any stale inline left so the CSS fallback can apply if #ui-left isn't found
+    el.style.width = '';
+    el.style.height = '';
+    this._refreshCustomImageSizes();
+    if (this.state.freeDock) this._applyFreeDockPosition();
+    else this._positionCompactDock();
     // Re-measure on a light interval rather than chasing every possible
-    // Foundry event that could resize the sidebar/hotbar (collapsing the
-    // sidebar, changing hotbar page count, etc.) — cheap, and catches all
-    // of them uniformly.
-    compactPositionTimer = window.setInterval(positionCompactDock, 500);
-    closeSettings();
-    renderPOIs();
+    // Foundry event that could resize the sidebar/hotbar — cheap, and
+    // catches all of them uniformly.
+    this._compactPositionTimer = window.setInterval(() => this._positionCompactDock(), 500);
+    this._closeSettings();
+    this._renderPOIs();
   }
-  function exitCompact(){
-    if (!state.compactMode) return;
-    state.compactMode = false;
-    dhWindow.classList.remove('compact');
-    dhWindow.classList.remove('free-dock');
-    dhWindow.style.removeProperty('--free-dock-left');
-    dhWindow.style.removeProperty('--free-dock-top');
-    if (compactPositionTimer) { window.clearInterval(compactPositionTimer); compactPositionTimer = null; }
-    dhWindow.style.right = '';
-    dhWindow.style.bottom = '';
-    refreshCustomImageSizes();
-    if (savedRect) {
-      dhWindow.style.left = savedRect.left;
-      dhWindow.style.top = savedRect.top;
-      // Restore whatever explicit size the user had resized the window to
-      // before docking (undocked-only — compact mode ignores these), so a
-      // resize isn't silently lost across a dock/undock cycle.
-      dhWindow.style.width = savedRect.width;
-      dhWindow.style.height = savedRect.height;
+  _exitCompact(){
+    if (!this.state.compactMode) return;
+    const el = this.element;
+    this.state.compactMode = false;
+    el.classList.remove('compact');
+    el.classList.remove('free-dock');
+    el.style.removeProperty('--free-dock-left');
+    el.style.removeProperty('--free-dock-top');
+    if (this._compactPositionTimer) { window.clearInterval(this._compactPositionTimer); this._compactPositionTimer = null; }
+    el.style.right = '';
+    el.style.bottom = '';
+    this._refreshCustomImageSizes();
+    if (this._savedRect) {
+      el.style.left = this._savedRect.left;
+      el.style.top = this._savedRect.top;
+      el.style.width = this._savedRect.width;
+      el.style.height = this._savedRect.height;
     }
-    renderPOIs();
-  }
-  draghandle.addEventListener('dblclick', () => {
-    if (!state.compactMode) enterCompact();
-  });
-  horizonView.addEventListener('dblclick', () => {
-    if (state.compactMode) exitCompact();
-  });
-
-  /* ---------------- Reset window ---------------- */
-  document.getElementById('dh-reset-btn').addEventListener('click', () => {
-    dhWindow.style.left = '3vw';
-    dhWindow.style.top = '8vh';
-    dhWindow.style.width = '';
-    dhWindow.style.height = '';
-    closeSettings();
-  });
-
-  /* ---------------- Window resize (undocked only) ---------------- */
-  const resizeHandle = document.getElementById('dh-resize-handle');
-  let MIN_WIN_WIDTH = 0, MIN_WIN_HEIGHT = 0;
-  let winResize = null;
-  function captureMinWindowSize(){
-    const rect = dhWindow.getBoundingClientRect();
-    MIN_WIN_WIDTH = rect.width;
-    MIN_WIN_HEIGHT = rect.height;
-  }
-  resizeHandle.addEventListener('mousedown', (e) => {
-    if (state.compactMode) return;
-    e.stopPropagation();
-    e.preventDefault();
-    closeSettings();
-    const rect = dhWindow.getBoundingClientRect();
-    winResize = { startClientX: e.clientX, startClientY: e.clientY, startWidth: rect.width, startHeight: rect.height };
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!winResize) return;
-    const dx = e.clientX - winResize.startClientX;
-    const dy = e.clientY - winResize.startClientY;
-    const maxWidth = window.innerWidth - 8;
-    const maxHeight = window.innerHeight - 8;
-    const newWidth = Math.max(MIN_WIN_WIDTH, Math.min(maxWidth, winResize.startWidth + dx));
-    const newHeight = Math.max(MIN_WIN_HEIGHT, Math.min(maxHeight, winResize.startHeight + dy));
-    dhWindow.style.width = `${newWidth}px`;
-    dhWindow.style.height = `${newHeight}px`;
-  });
-  window.addEventListener('mouseup', () => { winResize = null; });
-
-  window.addEventListener('resize', updateVisuals);
-  window.addEventListener('resize', positionCompactDock);
-
-  // Any layer whose starting biome is a built-in image preset (e.g. the
-  // default Forest layer) needs that image resolved through the canvas
-  // pipeline BEFORE the first render, since layer.customImage starts null.
-  function preloadBuiltinImages(layers, cb){
-    const pending = layers.filter(l => l.biome && l.biome.startsWith('img:') && !l.customImage);
-    if (!pending.length) { cb(); return; }
-    let remaining = pending.length;
-    const done = () => { remaining--; if (remaining <= 0) cb(); };
-    pending.forEach(layer => {
-      const key = layer.biome.slice(4);
-      const preset = BUILTIN_LAYER_IMAGES.forest.find(b => b.key === key);
-      if (!preset) { done(); return; }
-      layer.customImageRaw = preset.src;
-      layer.customImageName = preset.label;
-      layer.mirrorTile = true;
-      layer.tintToColor = true;
-      layer.customImageBuiltin = true;
-      processCustomImage(layer, (finalUrl, dims) => {
-        layer.customImage = finalUrl;
-        layer.customImageDims = dims;
-        done();
-      });
-    });
+    this._renderPOIs();
   }
 
-  /* ---------------- Scene persistence + GM → player sync ----------------
+  /* ---------------- Scene persistence + GM -> player sync ----------------
      The shared parts of a horizon setup — terrain layers, POIs, palette,
      horizon length, day/night state and the view lock — are what the GM
      builds and wants every player to see, so they're saved on the current
@@ -1624,10 +1592,10 @@ function initDistantHorizonsUI(){
      channel needed. Only an actual GM's client may write (game.user.isGM),
      so a player who happens to have the local GM-preview toggle on can
      never overwrite the real shared setup — their edits just won't save. */
-  function activeScene(){
-    return (typeof canvas !== 'undefined' && canvas.scene) || game.scenes?.viewed || null;
+  _activeScene(){
+    return (typeof canvas !== 'undefined' && canvas?.scene) || game.scenes?.viewed || null;
   }
-  function buildHorizonConfigPayload(){
+  _buildHorizonConfigPayload(){
     // Palette is deliberately NOT part of this payload — it has its own
     // scene flag and its own sync/apply functions below ("Palette sync"),
     // so that a routine save here (a POI move, a layer edit, day/night...)
@@ -1635,62 +1603,57 @@ function initDistantHorizonsUI(){
     // local override.
     return {
       v: 1,
-      layers: layerConfig.map(l => ({ ...l })),
-      pois: state.pois.map(p => ({ ...p })),
-      nextPoiId: state.nextPoiId,
-      horizonLength: state.horizonLength,
-      daytime: state.daytime,
-      viewLocked: state.viewLocked
+      layers: this.layerConfig.map(l => ({ ...l })),
+      pois: this.state.pois.map(p => ({ ...p })),
+      nextPoiId: this.state.nextPoiId,
+      horizonLength: this.state.horizonLength,
+      daytime: this.state.daytime,
+      viewLocked: this.state.viewLocked
     };
   }
-  let saveTimer = null;
-  // Guards against writing straight back what we just received — set
-  // while an incoming (or just-loaded) payload is being applied.
-  let applyingRemote = false;
-  function scheduleSave(){
+  _scheduleSave(){
     if (!game.user?.isGM) return;
-    if (applyingRemote) return;
-    const scene = activeScene();
+    if (this._applyingRemote) return;
+    const scene = this._activeScene();
     if (!scene) return;
-    if (saveTimer) clearTimeout(saveTimer);
+    if (this._saveTimer) clearTimeout(this._saveTimer);
     // Debounced — a POI drag or a burst of layer edits fires this many
     // times a second; only the settled result after ~half a second of
     // quiet actually needs to hit the database and push to players.
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      scene.setFlag(MODULE_ID, 'horizonConfig', buildHorizonConfigPayload()).catch(err => {
-        console.error(`${MODULE_ID} | failed to save horizon config to scene`, err);
-        ui.notifications?.error("Distant Horizons: couldn't save to this scene — check your permissions.");
-      });
+    this._saveTimer = setTimeout(() => {
+      this._saveTimer = null;
+      this._flushSave();
     }, 500);
   }
-  function applyHorizonConfigPayload(payload, { rerender = true } = {}){
+  _flushSave(){
+    const scene = this._activeScene();
+    if (!scene) return;
+    scene.setFlag(MODULE_ID, 'horizonConfig', this._buildHorizonConfigPayload()).catch(err => {
+      console.error(`${MODULE_ID} | failed to save horizon config to scene`, err);
+      ui.notifications?.error(game.i18n.localize('SHRIMPSDH.Notify.SaveError'));
+    });
+  }
+  _applyHorizonConfigPayload(payload, { rerender = true } = {}){
     if (!payload) return;
-    applyingRemote = true;
+    this._applyingRemote = true;
     try {
       if (Array.isArray(payload.layers) && payload.layers.length) {
-        payload.layers.forEach((saved, i) => { if (layerConfig[i] && saved) Object.assign(layerConfig[i], saved); });
+        payload.layers.forEach((saved, i) => { if (this.layerConfig[i] && saved) Object.assign(this.layerConfig[i], saved); });
       }
-      if (Array.isArray(payload.pois)) state.pois = payload.pois.map(p => ({ ...p }));
-      if (typeof payload.nextPoiId === 'number') state.nextPoiId = payload.nextPoiId;
-      if (payload.horizonLength) {
-        state.horizonLength = payload.horizonLength;
-        const lenSel = document.getElementById('opt-horizon-length');
-        if (lenSel) lenSel.value = state.horizonLength;
-        const lenDesc = document.getElementById('horizon-length-desc');
-        if (lenDesc) lenDesc.textContent = HORIZON_LENGTH_DESC[state.horizonLength];
-      }
-      if (payload.daytime) { state.daytime = payload.daytime; applyDaytime(); }
-      if (typeof payload.viewLocked === 'boolean') { state.viewLocked = payload.viewLocked; applyLockView(); }
-      if (rerender) { renderLayerRows(); initLayers(); renderPoiTable(); }
+      if (Array.isArray(payload.pois)) this.state.pois = payload.pois.map(p => ({ ...p }));
+      if (typeof payload.nextPoiId === 'number') this.state.nextPoiId = payload.nextPoiId;
+      if (payload.horizonLength) this.state.horizonLength = payload.horizonLength;
+      if (payload.daytime) this.state.daytime = payload.daytime;
+      if (typeof payload.viewLocked === 'boolean') this.state.viewLocked = payload.viewLocked;
+      if (rerender && this.rendered) this.render();
     } finally {
-      applyingRemote = false;
+      this._applyingRemote = false;
     }
   }
-  function loadHorizonConfigForActiveScene(opts){
-    const scene = activeScene();
+  _loadHorizonConfigForActiveScene(opts){
+    const scene = this._activeScene();
     const payload = scene?.getFlag(MODULE_ID, 'horizonConfig');
-    if (payload) applyHorizonConfigPayload(payload, opts);
+    if (payload) this._applyHorizonConfigPayload(payload, opts);
   }
 
   /* ---- Palette sync: the GM's palette pushes as an initial/updated
@@ -1701,91 +1664,87 @@ function initDistantHorizonsUI(){
      revision number on its own scene flag, kept separate from
      horizonConfig above specifically so "the GM changed the palette again"
      and "something else about the horizon changed" stay distinguishable. */
-  let paletteRev = 0;
-  let lastAppliedPaletteRev = -1;
-  function applyPalette(paletteName){
-    state.palette = paletteName;
-    document.documentElement.setAttribute('data-palette', state.palette);
-    // Re-tint the terrain layers to match the new palette's mood too.
-    applyLayerPaletteColors(state.palette);
-    renderLayerRows();
-    initLayers();
-    const paletteSel = document.getElementById('opt-palette');
-    if (paletteSel) paletteSel.value = state.palette;
-  }
-  function pushPaletteIfGm(){
+  _pushPaletteIfGm(){
     if (!game.user?.isGM) return;
-    const scene = activeScene();
+    const scene = this._activeScene();
     if (!scene) return;
-    paletteRev += 1;
-    lastAppliedPaletteRev = paletteRev; // already applied locally by the caller
-    scene.setFlag(MODULE_ID, 'horizonPalette', { palette: state.palette, rev: paletteRev }).catch(err => {
+    this._paletteRev += 1;
+    this._lastAppliedPaletteRev = this._paletteRev; // already applied locally by the caller
+    scene.setFlag(MODULE_ID, 'horizonPalette', { palette: this.state.palette, rev: this._paletteRev }).catch(err => {
       console.error(`${MODULE_ID} | failed to push palette to scene`, err);
-      ui.notifications?.error("Distant Horizons: couldn't push the palette — check your permissions.");
+      ui.notifications?.error(game.i18n.localize('SHRIMPSDH.Notify.PaletteError'));
     });
   }
-  function acceptPalettePush(payload){
+  _acceptPalettePush(payload){
     if (!payload || typeof payload.rev !== 'number') return;
-    // Keep our own counter in step regardless, so a GM who reloads
-    // mid-session still hands out fresh, higher revision numbers on their
-    // next change instead of reusing one a player has already seen (which
-    // would make that later push look stale and get ignored below).
-    paletteRev = Math.max(paletteRev, payload.rev);
+    this._paletteRev = Math.max(this._paletteRev, payload.rev);
     // A player's own local override IS allowed to be replaced here — but
-    // only by a revision newer than the one they last accepted (their own
-    // override doesn't advance lastAppliedPaletteRev), so this only fires
-    // for a genuinely new GM push, never for a routine config save that
-    // happens to still reference the old palette.
-    if (payload.palette && payload.rev > lastAppliedPaletteRev) {
-      applyPalette(payload.palette);
-      lastAppliedPaletteRev = payload.rev;
+    // only by a revision newer than the one they last accepted, so this
+    // only fires for a genuinely new GM push, never for a routine config
+    // save that happens to still reference the old palette.
+    if (payload.palette && payload.rev > this._lastAppliedPaletteRev) {
+      this._applyPalette(payload.palette);
+      this._lastAppliedPaletteRev = payload.rev;
     }
   }
-  function loadPushedPaletteForActiveScene(){
-    const scene = activeScene();
+  _loadPushedPaletteForActiveScene(){
+    const scene = this._activeScene();
     const payload = scene?.getFlag(MODULE_ID, 'horizonPalette');
-    if (payload) acceptPalettePush(payload);
+    if (payload) this._acceptPalettePush(payload);
   }
 
-  // React only to changes another client made — never to the echo of our
-  // own save, which would otherwise re-render mid-drag or mid-keystroke
-  // on the GM's own screen.
-  Hooks.on('updateScene', (scene, changes, options, userId) => {
+  // Called from the module-scope updateScene Hook (registered once,
+  // routed to whichever instance is currently open — see below).
+  handleUpdateScene(scene, changes, options, userId){
     if (userId === game.user?.id) return;
-    if (activeScene()?.id !== scene.id) return;
+    if (this._activeScene()?.id !== scene.id) return;
     if (!changes.flags?.[MODULE_ID]) return;
-    if ('horizonConfig' in changes.flags[MODULE_ID]) loadHorizonConfigForActiveScene();
-    if ('horizonPalette' in changes.flags[MODULE_ID]) acceptPalettePush(changes.flags[MODULE_ID].horizonPalette);
-  });
+    if ('horizonConfig' in changes.flags[MODULE_ID]) this._loadHorizonConfigForActiveScene();
+    if ('horizonPalette' in changes.flags[MODULE_ID]) this._acceptPalettePush(changes.flags[MODULE_ID].horizonPalette);
+  }
   // Switching scenes shows that scene's own saved horizon (or the shipped
   // defaults, if the GM hasn't set one up on it yet).
-  Hooks.on('canvasReady', () => {
-    loadHorizonConfigForActiveScene();
-    loadPushedPaletteForActiveScene();
-  });
+  handleCanvasReady(){
+    this._loadHorizonConfigForActiveScene();
+    this._loadPushedPaletteForActiveScene();
+  }
 
-  function boot(){
+  /* ---------------- Boot ---------------- */
+  // Any layer whose starting biome is a built-in image preset (e.g. the
+  // default Forest layer) needs that image resolved through the canvas
+  // pipeline BEFORE the first render, since layer.customImage starts null.
+  _preloadBuiltinImages(cb){
+    const pending = this.layerConfig.filter(l => l.biome && l.biome.startsWith('img:') && !l.customImage);
+    if (!pending.length) { cb(); return; }
+    let remaining = pending.length;
+    const done = () => { remaining--; if (remaining <= 0) cb(); };
+    pending.forEach(layer => {
+      const key = layer.biome.slice(4);
+      const preset = BUILTIN_LAYER_IMAGES.forest.find(b => b.key === key);
+      if (!preset) { done(); return; }
+      layer.customImageRaw = preset.src;
+      layer.customImageName = game.i18n.localize(preset.labelKey);
+      layer.mirrorTile = true;
+      layer.tintToColor = true;
+      layer.customImageBuiltin = true;
+      processCustomImage(layer, (finalUrl, dims) => {
+        layer.customImage = finalUrl;
+        layer.customImageDims = dims;
+        done();
+      });
+    });
+  }
+
+  /** Entry point used by the scene-control toggle — see Hooks.on('getSceneControlButtons') below. */
+  async boot(){
     // Pull in this scene's saved setup (if any) before the very first
     // paint, so players and a reconnecting GM see the real thing straight
     // away instead of the shipped defaults flashing first.
-    loadHorizonConfigForActiveScene({ rerender: false });
-    // Separate from the above: this scene's last-pushed palette (or, for
-    // the GM's own reload, their own last push).
-    loadPushedPaletteForActiveScene();
-    preloadBuiltinImages(layerConfig, () => {
-      renderLayerRows();
-      initLayers();
-      renderPoiTable();
-      updateVisuals();
-      // Deferred until after the above synchronous layout work completes,
-      // so the captured "natural size" floor (the resize handle's minimum)
-      // reflects the window's real laid-out content, not an empty shell.
-      requestAnimationFrame(captureMinWindowSize);
-    });
+    this._loadHorizonConfigForActiveScene({ rerender: false });
+    this._loadPushedPaletteForActiveScene();
+    await new Promise(resolve => this._preloadBuiltinImages(resolve));
+    await this.render({ force: true });
   }
-
-
-  boot();
 }
 
 /* ---------------- Foundry lifecycle ---------------- */
@@ -1811,16 +1770,17 @@ function registerModuleSettings(){
   });
 }
 
-Hooks.once('init', () => {
+Hooks.once('init', async () => {
   registerModuleSettings();
-});
-
-Hooks.once('ready', () => {
-  injectDistantHorizonsMarkup();
-  // Hidden until toggled on from the scene controls — see below. Set
-  // before boot() runs so there's no one-frame flash of the window.
-  document.getElementById('dh-window').style.display = 'none';
-  initDistantHorizonsUI();
+  // Registers the two repeated-row templates as named Handlebars partials
+  // ("dh-layer-row"/"dh-poi-row" — matching the {{> dh-layer-row}} /
+  // {{> dh-poi-row}} calls in templates/window.hbs), Foundry-style: the
+  // object form of loadTemplates() both preloads and registers each entry
+  // under its given key.
+  await foundry.applications.handlebars.loadTemplates({
+    'dh-layer-row': `${TEMPLATE_BASE}layer-row.hbs`,
+    'dh-poi-row': `${TEMPLATE_BASE}poi-row.hbs`
+  });
 });
 
 // Adds a toggle button to the Notes scene-controls group (the same group
@@ -1830,6 +1790,10 @@ Hooks.once('ready', () => {
 // glyph — matches what the module actually draws, and (unlike a custom
 // SVG) renders correctly through every Foundry version's own scene
 // control markup without extra wiring.
+//
+// The button itself stays visible/usable to every client, GM or player —
+// each person just shows or hides their OWN window; it's the window's
+// *contents* that differ by role (see showGmControls in _prepareContext).
 Hooks.on('getSceneControlButtons', (controls) => {
   // v11/v12 pass an array of control groups; v13 passes an object keyed
   // by group name. "notes" is Foundry's built-in journal-pin tool group.
@@ -1839,13 +1803,25 @@ Hooks.on('getSceneControlButtons', (controls) => {
   if (!notesControls) return;
   const tool = {
     name: 'distant-horizons',
-    title: "Toggle Shrimp's Distant Horizons",
+    title: game.i18n.localize('SHRIMPSDH.SceneControlTitle'),
     icon: 'fa-solid fa-mountain',
     toggle: true,
-    active: false,
+    active: !!foundry.applications.instances.get('dh-window'),
     onClick: (toggled) => {
-      const win = document.getElementById('dh-window');
-      if (win) win.style.display = toggled ? 'flex' : 'none';
+      // Singleton toggle pattern (see the project's ApplicationV2
+      // reference doc): open a fresh instance if none exists, close the
+      // existing one otherwise. Any in-progress debounced scene save is
+      // flushed on close (DistantHorizonsApp#_preClose), and the pan
+      // position (not itself persisted scene data) carries over to the
+      // next open via the module-scope lastKnownScrollX seed, so toggling
+      // the window off and back on feels like hide/show even though the
+      // Application instance itself is actually destroyed and recreated.
+      const existing = foundry.applications.instances.get('dh-window');
+      if (toggled) {
+        if (!existing) new DistantHorizonsApp().boot();
+      } else {
+        existing?.close();
+      }
     },
     button: true
   };
@@ -1854,4 +1830,20 @@ Hooks.on('getSceneControlButtons', (controls) => {
   } else if (notesControls.tools) {
     notesControls.tools[tool.name] = tool;
   }
+});
+
+// React only to changes another client made — never to the echo of our
+// own save, which would otherwise re-render mid-drag or mid-keystroke on
+// the GM's own screen. Registered once at module scope (Hooks persist
+// across the app being closed/reopened) and routed to whichever instance
+// is currently open, if any.
+Hooks.on('updateScene', (scene, changes, options, userId) => {
+  const app = foundry.applications.instances.get('dh-window');
+  app?.handleUpdateScene(scene, changes, options, userId);
+});
+// Switching scenes shows that scene's own saved horizon (or the shipped
+// defaults, if the GM hasn't set one up on it yet).
+Hooks.on('canvasReady', () => {
+  const app = foundry.applications.instances.get('dh-window');
+  app?.handleCanvasReady();
 });
