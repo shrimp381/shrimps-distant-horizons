@@ -1727,6 +1727,18 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   _applyHorizonConfigPayload(payload, { rerender = true } = {}){
     if (!payload) return Promise.resolve();
     this._applyingRemote = true;
+    // A scene saved by a build of this module before the upload-storage fix
+    // still has its layers' derived customImage/customImageDims bitmaps
+    // written directly into the saved payload (see _buildHorizonConfigPayload
+    // for why that's no longer done) — often hundreds of KB of base64 per
+    // layer. Loading that payload alone doesn't fix it: nothing else writes
+    // back to this scene's flag until the GM happens to edit something, so
+    // the stale, oversized data would otherwise just sit there indefinitely.
+    // Detected here and flushed back out in the new, stripped shape once
+    // the image rebuild below finishes — a one-time, self-limiting migration
+    // per scene, since a payload this saves is never stale again afterward.
+    const isStalePreUploadFixPayload = Array.isArray(payload.layers) &&
+      payload.layers.some(l => l && ('customImage' in l || 'customImageDims' in l));
     if (Array.isArray(payload.layers) && payload.layers.length) {
       payload.layers.forEach((saved, i) => {
         const layer = this.layerConfig[i];
@@ -1759,6 +1771,10 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       this._resolveLayerImages(() => {
         this._applyingRemote = false;
         if (rerender && this.rendered) this.render();
+        // Only the GM's own client writes scene flags (_flushSave/_scheduleSave
+        // both already no-op for a non-GM) — a player loading the same stale
+        // data just gets the locally-rebuilt image, no write attempted.
+        if (isStalePreUploadFixPayload && game.user?.isGM) this._flushSave();
         resolve();
       });
     });
