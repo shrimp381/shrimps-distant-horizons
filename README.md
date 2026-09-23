@@ -6,7 +6,7 @@ that GMs can place on the horizon and reveal to players over time.
 
 ![Screenshot](docs/screenshot.png)
 
-## Status — v1.0.0
+## Status — v1.0.1
 
 The window, layer controls, POI table, day/night toggle, GM/Player view, compact docking,
 and custom-image layer uploads all work as tested — and as of v1.0.0, the horizon/POI setup
@@ -67,9 +67,90 @@ actually shared with your players.**
   a player is free to pick a different palette for themselves without it being overwritten
   by the GM's *other* changes (a POI move, a layer edit, and so on never touch palette).
   Only the GM's *next* deliberate palette change takes over for everyone again.
-- Only an actual GM account can save or push changes — a player toggling the local
-  "GM preview" button to poke around the panels can't overwrite the real shared setup;
-  their edits just stay local to their own browser and vanish on reload, same as before.
-- **Stays per-browser, unchanged:** Free Dock and window position/size, the local GM/Player
-  preview toggle, and cosmetic display prefs (compass mode/opacity, drag hint, full-colour
-  icons). Those are personal display choices, not part of the shared horizon.
+- Only an actual GM account can save or push changes, and (as of v1.0.1) only an actual GM
+  account can even *see* the editing panels in the first place — see the v1.0.1 entry below.
+- **Stays per-browser, unchanged:** Free Dock and window position/size, and cosmetic display
+  prefs (compass mode/opacity, drag hint, full-colour icons). Those are personal display
+  choices, not part of the shared horizon. The GM/Player preview toggle itself is GM-only
+  as of v1.0.1 (see below) — it's a way for the GM to preview a player's screen, not a
+  personal display choice a player picks for themselves.
+
+**What ships pre-populated vs. blank (on a scene with no saved setup yet):**
+- The 6 horizon **layers** come with sensible default terrain (a mix of mountains, forest
+  and hills) so there's something to look at immediately — edit, reorder, or replace any
+  of them from the Layers panel.
+- **Points of Interest start empty.** POIs are scenario-specific, so nothing is placed for
+  you — use "+ Add POI" to place your own.
+
+**v1.0.1** — a security fix, a full audit against the project's Foundry module-dev
+reference doc, and the two structural follow-ups that audit called for: a real
+ApplicationV2 port and full `game.i18n` localization. No new user-facing features.
+
+- **Fixed: real players got GM access.** Every client (GM or player) booted the exact same
+  injected window with the "GM view" state on by default and nothing checking the real
+  Foundry permission, so an actual player's own client showed the full Layers/POI editing
+  panel — add/edit/delete POIs, edit terrain layers, and every GM-only settings section —
+  from the moment they opened it, with nothing stopping them from using it. (Their edits were
+  never *persisted* — `game.user.isGM` already gated every save/push — but the controls
+  themselves were fully visible and clickable, and the GM/Player titlebar toggle that was
+  supposed to be a GM-only "preview what a player sees" tool could be freely flipped back to
+  "GM" by anyone.) Fixed at the source: an actual player's client is now hard-locked into
+  Player view straight from `game.user.isGM`, and the GM/Player toggle and Lock View button
+  are removed from a real player's window entirely rather than merely hidden by a client-side
+  state a player could flip back.
+- **Fixed: CSS was leaking onto the rest of Foundry.** Several rules were unscoped globals —
+  `*{box-sizing:border-box}`, a `body{...}` block setting `overflow:hidden`, a dark
+  background and a serif `font-family` on the real page body, and bare `select`/
+  `input[type=range]`/`table` selectors that restyled every dropdown, slider and table in
+  Foundry's own core UI and every other installed module's windows, not just this one. This
+  was a leftover from the module's original artifact-preview page (which legitimately owned
+  the whole page it ran in) that was never cleaned up when it was ported into the real
+  module. Every rule is now scoped under the module's own injected root
+  (`#shrimp-distant-horizons-root`) instead of `:root`/`html`/`body`, per the CSS-namespacing
+  guidance in the project's Foundry module-dev reference.
+- **Ported to ApplicationV2 + HandlebarsApplicationMixin.** The window is no longer
+  hand-rolled DOM injection — it's a proper Foundry `ApplicationV2` subclass with
+  Handlebars templates (`templates/window.hbs`, `settings.hbs`, `layers-info.hbs`, and two
+  registered partials for layer/POI rows), `static PARTS`/`static DEFAULT_OPTIONS`, and
+  `data-action` handlers instead of hand-wired DOM listeners. This is more than a
+  refactor: the GM-only editing panels (`#controls`, the GM/Player toggle, Lock View, and
+  every `.gm-only` settings section) are now gated with `{{#if isGM}}`/
+  `{{#if showGmControls}}` in the templates themselves, so on a real player's client that
+  markup doesn't exist in the rendered DOM at all — a step beyond the v1.0.1 fix above,
+  which hid it with logic but still built it. Window lifecycle (position memory,
+  minimize/restore, the singleton show/hide toggle from the scene-controls button) now
+  rides Foundry's own `ApplicationV2` machinery rather than bespoke tracking code.
+- **Fully localized via `game.i18n`.** Every user-facing string — window title, subtitle,
+  panel headings, button labels and titles, table headers, settings labels, empty-state
+  text — now resolves through `game.i18n.localize()`/`.format()` against
+  `lang/en.json` (declared in `module.json`'s new `"languages"` field), instead of being
+  hardcoded in English in the script. A translator can add another language by dropping in
+  a new `lang/<code>.json` with the same keys and registering it in `module.json` — no
+  script changes needed.
+
+## Project structure
+
+```
+shrimps-distant-horizons/
+├── module.json              Foundry module manifest
+├── scripts/
+│   └── distant-horizons.js  ApplicationV2 app class + hooks (esmodule)
+├── templates/
+│   ├── window.hbs           Main window PART
+│   ├── settings.hbs         Settings dropdown PART
+│   ├── layers-info.hbs      Layers-info popup PART
+│   ├── layer-row.hbs        Registered partial (one terrain layer row)
+│   └── poi-row.hbs          Registered partial (one POI table row)
+├── lang/
+│   └── en.json               Localization strings (game.i18n)
+├── styles/
+│   └── distant-horizons.css
+├── assets/
+│   ├── shrimp-logo.png
+│   ├── forest-hand-1.png
+│   └── forest-hand-2.png
+├── docs/
+│   └── screenshot.png
+├── LICENSE
+└── README.md
+```
