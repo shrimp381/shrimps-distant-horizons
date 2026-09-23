@@ -157,6 +157,38 @@ new code:
   (confirmed via the tool's own definition and a constructor-level exception with a
   full stack trace), then confirmed the fix opens the window correctly.
 
+**v1.0.3** — fixes the button still not opening the window after v1.0.2, found by
+testing against your actual running Foundry server rather than a mocked one:
+
+- **Fixed: opening the window threw a template error and failed silently.**
+  `templates/window.hbs` rendered as several sibling `<div>`s at the top level
+  (`#dh-free-dock-handle`, `#dh-titlebar`, `#horizon-wrap`, `#controls`,
+  `#dh-resize-handle`) — that's what the original hand-rolled-DOM version
+  injected, and the v1.0.1 port carried it over unchanged. ApplicationV2
+  requires every PART's template to render exactly one root HTML element (it
+  uses that element as the part's own mount node), so Foundry threw `Failed to
+  render template part "window": Template part "window" must render a single
+  HTML element` the instant the window tried to open — with nothing visible
+  beyond that internal error. Fixed by wrapping the whole template in one
+  outer `<div id="dh-window-part">`.
+- That wrapper needed a matching CSS rule to stay invisible to layout (so
+  `#dh-titlebar`/`#horizon-wrap`/`#controls`/`#dh-resize-handle` still act as
+  direct flex children of the window, exactly as before). `#dh-settings` and
+  `#layers-info-popup` — the settings and layers-info PARTS — are *also* bare
+  `<div>` children of the window's root element, so this rule is scoped to
+  `#dh-window-part`'s own id rather than a blanket "any div" selector, which
+  would otherwise have collapsed those two popups' boxes as well (breaking
+  their fixed positioning, background and border whenever shown).
+- This and the v1.0.2 fixes were both missed by the mocked test harness used
+  to verify the original ApplicationV2 port, because it stubbed a simplified
+  `ApplicationV2` and didn't exercise Foundry's actual template-to-single-
+  element rendering path or its real scene-control click dispatch. This round
+  was verified directly against a live Foundry v13 instance instead:
+  reproduced the exact template error, then re-rendered the fixed template
+  through Foundry's own Handlebars in the browser and confirmed it now
+  produces exactly one root element before shipping.
+
+
 ## Project structure
 
 ```
