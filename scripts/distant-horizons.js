@@ -17,17 +17,26 @@ const MODULE_BASE = `modules/${MODULE_ID}/`;
 const TEMPLATE_BASE = `${MODULE_BASE}templates/`;
 
 /* ---------------- Foundry file storage (layer/POI image uploads) ----------------
-   Uploaded layer and POI images go through Foundry's own FilePicker.upload()
-   into the world's Data storage (worlds/<world-id>/shrimps-distant-horizons/…),
-   the same as any other Foundry asset — never inlined as base64 data: URIs.
-   A data: URI embeds the full image bytes (~33% larger, base64-encoded)
-   directly into the Scene document's flags on every save, which bloats the
-   scene, is re-sent in full on every sync push, and bypasses Foundry's own
-   asset caching entirely. FilePicker.upload() instead saves the real file to
-   disk and returns a lightweight relative path, which is all that's stored
-   and synced — exactly like an image any other Foundry document (a Tile, a
-   JournalEntry, an Actor portrait) would reference. */
+   Layer and POI images are chosen through Foundry's OWN FilePicker
+   application — the exact file-browser dialog Foundry itself uses for a
+   Tile's or an Actor's image field (see #onTriggerLayerUpload /
+   #onTriggerPoiIconUpload below) — rather than a plain device "choose a
+   file" input read into a base64 data: URI. That dialog handles uploading a
+   new file into the world's Data storage
+   (worlds/<world-id>/shrimps-distant-horizons/…) itself when that's what the
+   GM does, and also lets them pick a file already sitting there (or anywhere
+   else on the server) without uploading a duplicate copy from their device
+   every time. Either way, what comes back through its `callback` is always
+   a real, lightweight server path — never a data: URI. A data: URI embeds
+   the full image bytes (~33% larger, base64-encoded) directly into the
+   Scene document's flags on every save, which bloats the scene, is re-sent
+   in full on every sync push, and bypasses Foundry's own asset caching
+   entirely. */
 const _dhEnsuredDirs = new Set();
+/** Pre-creates the module's own world-scoped subfolder ("layers" or "pois")
+ *  so FilePicker has somewhere real to open into (via its `current` option)
+ *  instead of erroring or falling back to some other location the first
+ *  time a GM picks an image in a given world. */
 async function ensureModuleUploadDir(subdir){
   const FP = foundry.applications.apps.FilePicker.implementation;
   const worldId = game.world.id;
@@ -44,34 +53,6 @@ async function ensureModuleUploadDir(subdir){
     _dhEnsuredDirs.add(dir);
   }
 }
-/** Uploads `file` into the module's own world-scoped storage under `subdir`
- *  ("layers" or "pois") and returns the resulting relative path (a real,
- *  lightweight URL Foundry can serve — not a base64 data: URI). Returns
- *  null and shows a notification on failure. GM-only in practice (the
- *  upload controls themselves only render for a GM — see the isGM guards
- *  in templates/window.hbs), and Foundry's own upload permission check
- *  applies regardless. */
-async function uploadModuleImage(file, subdir){
-  const FP = foundry.applications.apps.FilePicker.implementation;
-  try {
-    await ensureModuleUploadDir(subdir);
-    const dir = `worlds/${game.world.id}/${MODULE_ID}/${subdir}`;
-    // Timestamp-prefixed so re-uploading a same-named file (e.g. "forest.png"
-    // for two different layers) never silently overwrites another layer's
-    // or POI's already-saved image.
-    const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, '_');
-    const uploadFile = new File([file], `${Date.now()}-${safeName}`, { type: file.type });
-    const result = await FP.upload('data', dir, uploadFile, {}, { notify: false });
-    if (!result || result === false || !result.path) {
-      throw new Error('Foundry FilePicker upload did not return a saved file path');
-    }
-    return result.path;
-  } catch (err) {
-    console.error(`${MODULE_ID} | image upload failed`, err);
-    ui.notifications?.error(game.i18n.localize('SHRIMPSDH.Notify.UploadError'));
-    return null;
-  }
-}
 
 const ICONS = {
   lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>`,
@@ -86,9 +67,10 @@ const ICONS = {
   check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"></path></svg>`
 };
 
-// Display-only path shown in upload-button tooltips — the module's own
-// upload directories, matching what uploadModuleImage()/ensureModuleUploadDir()
-// above actually write to. Not resolvable until game.world is ready, so this
+// Display-only path shown in upload-button tooltips, and the FilePicker
+// `current` folder the upload dialogs below open into by default — the
+// module's own upload directories, matching what ensureModuleUploadDir()
+// above actually creates. Not resolvable until game.world is ready, so this
 // stays a getter-backed object rather than a static string built at load time.
 const STORAGE = {
   get layersUpload(){ return `worlds/${game.world.id}/${MODULE_ID}/layers/`; },
@@ -837,34 +819,13 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
-  async _onLayerRowsChange(e){
+  _onLayerRowsChange(e){
     const t = e.target;
     const layerId = parseInt(t.dataset.layerId, 10);
     const layer = this.layerConfig.find(l => l.id === layerId);
     if (!layer) return;
     if (t.classList.contains('layer-biome')) {
       this._applyBiomeOrImage(layer, t.value, () => this.render());
-    } else if (t.classList.contains('layer-file-input')) {
-      const file = t.files[0];
-      if (!file) return;
-      // Goes to Foundry's own file storage (uploadModuleImage), not a
-      // base64 data: URI — see that function's comment for why. The file
-      // input is cleared either way so re-picking the same filename still
-      // fires a fresh 'change' event next time.
-      const uploadedPath = await uploadModuleImage(file, 'layers');
-      t.value = '';
-      if (!uploadedPath) return;
-      layer.customImageRaw = uploadedPath; layer.customImageName = file.name;
-      if (layer.mirrorTile === undefined) layer.mirrorTile = true;
-      if (layer.tintToColor === undefined) layer.tintToColor = true;
-      layer.imageSettingsOpen = true;
-      layer.customImageBuiltin = false;
-      processCustomImage(layer, (finalUrl, dims) => {
-        layer.customImage = finalUrl;
-        layer.customImageDims = dims;
-        layer._processedFromRaw = layer.customImageRaw;
-        this.render();
-      });
     }
   }
   _onLayerRowsInput(e){
@@ -887,7 +848,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
 
-  async _onPoiListChange(e){
+  _onPoiListChange(e){
     const t = e.target;
     const poiId = parseInt(t.dataset.poiId, 10);
     const poi = this.uiState.pois.find(p => p.id === poiId);
@@ -897,18 +858,6 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       this._renderPOIs();
     } else if (t.classList.contains('poi-icon-select')) {
       poi.icon = t.value; poi.customIcon = null;
-      this.render();
-    } else if (t.classList.contains('poi-icon-file')) {
-      const file = t.files[0];
-      if (!file) return;
-      // Goes to Foundry's own file storage, not a base64 data: URI — a POI
-      // icon has no mirror-tile/derived-image step, so the uploaded path
-      // IS the final customIcon value, no separate raw/processed split
-      // needed (unlike layer images — see uploadModuleImage/processCustomImage).
-      const uploadedPath = await uploadModuleImage(file, 'pois');
-      t.value = '';
-      if (!uploadedPath) return;
-      poi.customIcon = uploadedPath;
       this.render();
     } else if (t.classList.contains('poi-layer-select')) {
       // Keep the POI exactly where it visually is on screen — reassigning
@@ -1010,8 +959,41 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     layer.tintToColor = target.checked;
     this.render();
   }
-  static #onTriggerLayerUpload(event, target){
-    target.parentElement?.querySelector('.layer-file-input')?.click();
+  // Opens Foundry's OWN FilePicker application — the same file-browser
+  // dialog Foundry uses for a Tile's or an Actor's image field — rather
+  // than a plain OS "choose a file from my device" input. That dialog
+  // lets the GM either upload a new file (still saved through Foundry's
+  // own storage, same as before) or pick an image already sitting in the
+  // module's upload folder or anywhere else on the server, without
+  // re-uploading a duplicate copy from their device every time.
+  static async #onTriggerLayerUpload(event, target){
+    const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
+    if (!layer) return;
+    await ensureModuleUploadDir('layers'); // so there's a folder to land in/browse to
+    new foundry.applications.apps.FilePicker.implementation({
+      type: 'image',
+      current: layer.customImageRaw || STORAGE.layersUpload,
+      callback: (path) => this._onLayerImagePicked(layer, path)
+    }).render(true);
+  }
+  /** Shared by both the FilePicker "upload" and "select existing file"
+   *  paths — either way `path` is already a real Foundry storage path
+   *  (FilePicker itself does the uploading when that's what happened),
+   *  never a base64 data: URI. */
+  _onLayerImagePicked(layer, path){
+    if (!path) return;
+    layer.customImageRaw = path;
+    layer.customImageName = path.split('/').pop();
+    if (layer.mirrorTile === undefined) layer.mirrorTile = true;
+    if (layer.tintToColor === undefined) layer.tintToColor = true;
+    layer.imageSettingsOpen = true;
+    layer.customImageBuiltin = false;
+    processCustomImage(layer, (finalUrl, dims) => {
+      layer.customImage = finalUrl;
+      layer.customImageDims = dims;
+      layer._processedFromRaw = layer.customImageRaw;
+      this.render();
+    });
   }
   static #onOpenLayerImageSettings(event, target){
     const layer = this.layerConfig.find(l => l.id === parseInt(target.dataset.layerId, 10));
@@ -1037,8 +1019,23 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     layer.imageSettingsOpen = false;
     this.render();
   }
-  static #onTriggerPoiIconUpload(event, target){
-    target.closest('.poi-icon-field')?.querySelector('.poi-icon-file')?.click();
+  // Same rationale as #onTriggerLayerUpload above: Foundry's own file
+  // browser, not a bare device file input.
+  static async #onTriggerPoiIconUpload(event, target){
+    const poi = this.uiState.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    if (!poi) return;
+    await ensureModuleUploadDir('pois');
+    new foundry.applications.apps.FilePicker.implementation({
+      type: 'image',
+      current: poi.customIcon || STORAGE.poisUpload,
+      callback: (path) => {
+        if (!path) return;
+        // No mirror-tile/derived-image step for a POI icon (unlike a layer
+        // image) — the picked/uploaded path IS the final value.
+        poi.customIcon = path;
+        this.render();
+      }
+    }).render(true);
   }
   static #onClearPoiIcon(event, target){
     const poi = this.uiState.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));

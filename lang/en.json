@@ -79,7 +79,7 @@
       "InfoBtnAria": "Custom image guidance",
       "QuickApplyBtn": "Apply all",
       "ToggleTitle": "Toggle layer {id}",
-      "UploadBtnTitle": "Upload a custom image for this layer — stored via Foundry's FilePicker under {path}",
+      "UploadBtnTitle": "Choose an image for this layer — opens Foundry's own file browser to upload a new one or pick an existing file under {path}",
       "ImageSettingsBtnTitle": "Tiling & tint options",
       "ClearImageBtnTitle": "Revert to procedural biome",
       "MirrorTileLabel": "Seamless mirror tiling",
@@ -136,7 +136,7 @@
         "Tree": "Grove",
         "Water": "Water"
       },
-      "UploadBtnTitle": "Upload a custom image for this POI — stored via Foundry's FilePicker under {path}",
+      "UploadBtnTitle": "Choose an image for this POI — opens Foundry's own file browser to upload a new one or pick an existing file under {path}",
       "ClearIconBtnTitle": "Revert to a generic icon",
       "FocusBtnTitle": "Centre horizon on this POI",
       "LockBtnTitle": "Lock position",

@@ -2,7 +2,7 @@
   "id": "shrimps-distant-horizons",
   "title": "Shrimp's Distant Horizons",
   "description": "A parallax horizon and points-of-interest overlay window for your scenes. The GM's horizon/POI setup is saved per-scene and synced live to players — see the README for full status and roadmap.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "compatibility": {
     "minimum": "13",
     "verified": "13"
