@@ -394,7 +394,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this.IS_GM = game.user?.isGM === true;
 
     this.layerConfig = defaultLayerConfig();
-    this.state = {
+    this.uiState = {
       scrollX: lastKnownScrollX,
       viewMode: this.IS_GM ? 'gm' : 'player',
       compactMode: false,
@@ -455,7 +455,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   /* ---------------- Context for the Handlebars templates ---------------- */
   async _prepareContext(options){
-    const s = this.state;
+    const s = this.uiState;
     const isGmView = s.viewMode === 'gm';
     // GM-only edit surface: the real permission gate (this.IS_GM) AND the
     // GM's own local preview toggle both have to agree — see the
@@ -574,7 +574,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // starting position explicitly, through the framework's own position
     // API, so it lands where the original design always put it: an
     // out-of-the-way corner, not centred over the canvas.
-    if (!this.state.compactMode) this.setPosition(this._computeDefaultPosition());
+    if (!this.uiState.compactMode) this.setPosition(this._computeDefaultPosition());
   }
 
   _computeDefaultPosition(){
@@ -606,8 +606,8 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // Persistent chrome classes — these live on `this.element` itself,
     // which _onRender never replaces (only PART content is rebuilt), so
     // they're only *applied* here, never reset by a render.
-    el.classList.toggle('compact', this.state.compactMode);
-    el.classList.toggle('free-dock', this.state.compactMode && this.state.freeDock);
+    el.classList.toggle('compact', this.uiState.compactMode);
+    el.classList.toggle('free-dock', this.uiState.compactMode && this.uiState.freeDock);
     el.classList.toggle('dragging', !!this._winDrag);
 
     this._wireDynamicControls();
@@ -618,8 +618,8 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // original module's boot()/initLayers() did after every mutation.
     this._initLayers();
 
-    if (this.state.compactMode) {
-      if (this.state.freeDock) this._applyFreeDockPosition();
+    if (this.uiState.compactMode) {
+      if (this.uiState.freeDock) this._applyFreeDockPosition();
       else this._positionCompactDock();
     }
 
@@ -646,7 +646,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       cancelAnimationFrame(this._focusAnim.raf);
       this._focusAnim = null;
     }
-    lastKnownScrollX = this.state.scrollX;
+    lastKnownScrollX = this.uiState.scrollX;
     this._unbindGlobalListeners();
   }
 
@@ -661,7 +661,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this._onWindowTouchEnd = () => { this._isPanning = false; };
     this._onWindowResize = () => {
       this._updateVisuals();
-      if (this.state.compactMode && !this.state.freeDock) this._positionCompactDock();
+      if (this.uiState.compactMode && !this.uiState.freeDock) this._positionCompactDock();
       if (this._settingsOpen) this._positionSettings();
       if (this._layersInfoOpen) this._positionLayersInfo();
     };
@@ -706,13 +706,13 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const draghandle = el.querySelector('#dh-draghandle');
     if (draghandle) {
       draghandle.addEventListener('mousedown', (e) => this._startWindowDrag(e));
-      draghandle.addEventListener('dblclick', () => { if (!this.state.compactMode) this._enterCompact(); });
+      draghandle.addEventListener('dblclick', () => { if (!this.uiState.compactMode) this._enterCompact(); });
     }
     const horizonView = el.querySelector('#horizon-view');
     if (horizonView) {
       horizonView.addEventListener('mousedown', (e) => this._startPan(e));
       horizonView.addEventListener('touchstart', (e) => this._startPanTouch(e), { passive: true });
-      horizonView.addEventListener('dblclick', () => { if (this.state.compactMode) this._exitCompact(); });
+      horizonView.addEventListener('dblclick', () => { if (this.uiState.compactMode) this._exitCompact(); });
     }
     const resizeHandle = el.querySelector('#dh-resize-handle');
     if (resizeHandle) resizeHandle.addEventListener('mousedown', (e) => this._startWindowResize(e));
@@ -736,20 +736,20 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     const settingsPanel = el.querySelector('#dh-settings');
     if (settingsPanel) {
       settingsPanel.querySelector('#opt-compass-mode')?.addEventListener('change', (e) => {
-        this.state.compassMode = e.target.value;
+        this.uiState.compassMode = e.target.value;
         this.render();
       });
       settingsPanel.querySelector('#opt-compass-opacity')?.addEventListener('input', (e) => {
-        this.state.compassOpacity = parseInt(e.target.value, 10) / 100;
-        el.querySelector('#compass-hud')?.style.setProperty('--compass-opacity', this.state.compassOpacity);
+        this.uiState.compassOpacity = parseInt(e.target.value, 10) / 100;
+        el.querySelector('#compass-hud')?.style.setProperty('--compass-opacity', this.uiState.compassOpacity);
       });
       settingsPanel.querySelector('#opt-draghint')?.addEventListener('change', (e) => {
-        this.state.showDragHint = e.target.checked;
+        this.uiState.showDragHint = e.target.checked;
         const hint = el.querySelector('#drag-hint');
-        if (hint) hint.hidden = !this.state.showDragHint;
+        if (hint) hint.hidden = !this.uiState.showDragHint;
       });
       settingsPanel.querySelector('#opt-fullcolour')?.addEventListener('change', (e) => {
-        this.state.fullColourIcons = e.target.checked;
+        this.uiState.fullColourIcons = e.target.checked;
         this._renderPOIs();
       });
       settingsPanel.querySelector('#opt-palette')?.addEventListener('change', (e) => {
@@ -761,16 +761,16 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
         this._pushPaletteIfGm();
       });
       settingsPanel.querySelector('#opt-horizon-length')?.addEventListener('change', (e) => {
-        this.state.horizonLength = e.target.value;
+        this.uiState.horizonLength = e.target.value;
         this._scheduleSave();
         this.render();
       });
       settingsPanel.querySelector('#opt-free-dock')?.addEventListener('change', (e) => {
-        this.state.freeDock = e.target.checked;
-        game.settings.set(MODULE_ID, 'freeDockEnabled', this.state.freeDock);
-        el.classList.toggle('free-dock', this.state.freeDock);
-        if (this.state.compactMode) {
-          if (this.state.freeDock) this._applyFreeDockPosition();
+        this.uiState.freeDock = e.target.checked;
+        game.settings.set(MODULE_ID, 'freeDockEnabled', this.uiState.freeDock);
+        el.classList.toggle('free-dock', this.uiState.freeDock);
+        if (this.uiState.compactMode) {
+          if (this.uiState.freeDock) this._applyFreeDockPosition();
           else {
             el.style.removeProperty('--free-dock-left');
             el.style.removeProperty('--free-dock-top');
@@ -828,7 +828,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   _onPoiListChange(e){
     const t = e.target;
     const poiId = parseInt(t.dataset.poiId, 10);
-    const poi = this.state.pois.find(p => p.id === poiId);
+    const poi = this.uiState.pois.find(p => p.id === poiId);
     if (!poi) return;
     if (t.classList.contains('poi-name-input')) {
       poi.name = t.value;
@@ -848,8 +848,8 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       const newLayerId = parseInt(t.value, 10);
       const newLayer = this.layerConfig.find(l => l.id === newLayerId);
       if (oldLayer && newLayer) {
-        const visualX = poi.xPos - (this.state.scrollX * oldLayer.speed) + oldLayer.xOffset;
-        poi.xPos = visualX + (this.state.scrollX * newLayer.speed) - newLayer.xOffset;
+        const visualX = poi.xPos - (this.uiState.scrollX * oldLayer.speed) + oldLayer.xOffset;
+        poi.xPos = visualX + (this.uiState.scrollX * newLayer.speed) - newLayer.xOffset;
         poi.offsetY = poi.offsetY - oldLayer.yOffset + newLayer.yOffset;
       }
       poi.layer = newLayerId;
@@ -873,11 +873,11 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // if this were somehow invoked (stale render, dev tools), an actual
     // player's client can never switch itself into 'gm' mode.
     if (!this.IS_GM) return;
-    this.state.viewMode = target.dataset.mode;
+    this.uiState.viewMode = target.dataset.mode;
     this.render();
   }
   static #onSetDaytime(event, target){
-    this.state.daytime = target.dataset.time;
+    this.uiState.daytime = target.dataset.time;
     this._scheduleSave();
     this.render();
   }
@@ -888,18 +888,18 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     // (IS_GM guard in window.hbs); this is the same defense-in-depth as
     // the view-mode guard above.
     if (!this.IS_GM) return;
-    this.state.viewLocked = !this.state.viewLocked;
+    this.uiState.viewLocked = !this.uiState.viewLocked;
     this._scheduleSave();
     this.render();
   }
   static #onAddPoi(){
     const icons = Object.keys(ICON_LABEL_KEYS);
     const firstEnabled = this.layerConfig.find(l => l.enabled) || this.layerConfig[3];
-    this.state.pois.push({
-      id: this.state.nextPoiId++,
+    this.uiState.pois.push({
+      id: this.uiState.nextPoiId++,
       name: game.i18n.localize('SHRIMPSDH.POI.NewName'),
       layer: firstEnabled.id,
-      xPos: this.state.scrollX + 300,
+      xPos: this.uiState.scrollX + 300,
       offsetY: this._defaultOffsetYForLayer(firstEnabled.id),
       state: 'rumored',
       size: 'large',
@@ -969,24 +969,24 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     target.closest('.poi-icon-field')?.querySelector('.poi-icon-file')?.click();
   }
   static #onClearPoiIcon(event, target){
-    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    const poi = this.uiState.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
     if (!poi) return;
     poi.customIcon = null;
     this.render();
   }
   static #onFocusPoi(event, target){
-    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    const poi = this.uiState.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
     if (poi) this._focusOnPoi(poi);
   }
   static #onTogglePoiLock(event, target){
-    const poi = this.state.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
+    const poi = this.uiState.pois.find(p => p.id === parseInt(target.dataset.poiId, 10));
     if (!poi) return;
     poi.locked = !poi.locked;
     this.render();
   }
   static #onDeletePoi(event, target){
     const poiId = parseInt(target.dataset.poiId, 10);
-    this.state.pois = this.state.pois.filter(p => p.id !== poiId);
+    this.uiState.pois = this.uiState.pois.filter(p => p.id !== poiId);
     this.render();
   }
 
@@ -1073,13 +1073,13 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   }
   _applyPalette(paletteName){
-    this.state.palette = paletteName;
+    this.uiState.palette = paletteName;
     // Scoped to our own injected root, not the real page <html> — see the
     // CSS file's header comment on #shrimp-distant-horizons-root for why
     // setting this (and our CSS vars) on the real :root would leak into
     // the rest of Foundry's UI.
-    document.getElementById('shrimp-distant-horizons-root')?.setAttribute('data-palette', this.state.palette);
-    applyLayerPaletteColors(this.layerConfig, this.state.palette);
+    document.getElementById('shrimp-distant-horizons-root')?.setAttribute('data-palette', this.uiState.palette);
+    applyLayerPaletteColors(this.layerConfig, this.uiState.palette);
     this.render();
   }
   _defaultOffsetYForLayer(layerId){
@@ -1092,7 +1092,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     return Math.max(0, -layer.yOffset);
   }
   _horizonHeightPx(){
-    return this.state.compactMode ? 158 : 168;
+    return this.uiState.compactMode ? 158 : 168;
   }
   _applyCustomImageSize(layer, bgEl){
     const dims = layer.customImageDims;
@@ -1162,7 +1162,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   _renderIconMarkup(poi, layer){
     if (poi.customIcon) {
-      if (this.state.fullColourIcons) {
+      if (this.uiState.fullColourIcons) {
         return `<img src="${poi.customIcon}" style="width:100%;height:100%;object-fit:contain;display:block;">`;
       }
       return `<div style="width:100%;height:100%;background:${layer.color};
@@ -1172,7 +1172,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
         -webkit-mask-position:center; mask-position:center;"></div>`;
     }
     const defFn = POI_ICON_DEFS[poi.icon] || POI_ICON_DEFS.tower;
-    const fill = this.state.fullColourIcons ? (ICON_FULLCOLOUR[poi.icon] || '#c9a75c') : layer.color;
+    const fill = this.uiState.fullColourIcons ? (ICON_FULLCOLOUR[poi.icon] || '#c9a75c') : layer.color;
     return defFn(fill);
   }
 
@@ -1182,13 +1182,13 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!container) return;
     el.querySelectorAll('.poi-container').forEach(node => node.remove());
 
-    this.state.pois.forEach(poi => {
+    this.uiState.pois.forEach(poi => {
       const layer = this.layerConfig.find(l => l.id === parseInt(poi.layer, 10));
       if (!layer || !layer.enabled) return;
       if (poi.state === 'hidden') return;
 
       const poiEl = document.createElement('div');
-      const draggable = this.state.viewMode === 'gm' && !this.state.compactMode && !poi.locked;
+      const draggable = this.uiState.viewMode === 'gm' && !this.uiState.compactMode && !poi.locked;
       poiEl.className = 'poi-container' + (draggable ? ' draggable' : '');
       poiEl.id = `poi-${poi.id}`;
       poiEl.style.zIndex = layer.baseZ + 5;
@@ -1241,15 +1241,15 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
   _animatePanTo(targetScrollX, duration = 650){
     if (this._focusAnim) cancelAnimationFrame(this._focusAnim.raf);
-    const startX = this.state.scrollX;
+    const startX = this.uiState.scrollX;
     const delta = targetScrollX - startX;
-    if (Math.abs(delta) < 0.5) { this.state.scrollX = targetScrollX; this._updateVisuals(); return; }
+    if (Math.abs(delta) < 0.5) { this.uiState.scrollX = targetScrollX; this._updateVisuals(); return; }
     const startTime = performance.now();
     const easeInOutCubic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
     this._focusAnim = { raf: 0 };
     const step = (now) => {
       const t = Math.min(1, (now - startTime) / duration);
-      this.state.scrollX = startX + delta * easeInOutCubic(t);
+      this.uiState.scrollX = startX + delta * easeInOutCubic(t);
       this._updateVisuals();
       if (t < 1) {
         this._focusAnim.raf = requestAnimationFrame(step);
@@ -1263,13 +1263,13 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   _updateVisuals(){
     const el = this.element;
     if (!el) return;
-    let rawDeg = (this.state.scrollX / 10) % 360;
+    let rawDeg = (this.uiState.scrollX / 10) % 360;
     if (rawDeg < 0) rawDeg += 360;
     const directions = ['N','NE','E','SE','S','SW','W','NW'];
     const dirIndex = Math.round(rawDeg / 45) % 8;
     const compassText = el.querySelector('#compass-text');
     if (compassText) {
-      compassText.textContent = this.state.compassMode === 'simple'
+      compassText.textContent = this.uiState.compassMode === 'simple'
         ? directions[dirIndex]
         : `${directions[dirIndex]} ${Math.round(rawDeg)}°`;
     }
@@ -1278,7 +1278,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       if (!layer.enabled) return;
       const bgEl = el.querySelector(`#layer-bg-${layer.id}`);
       if (bgEl) {
-        const posX = `${-this.state.scrollX * layer.speed + layer.xOffset}px`;
+        const posX = `${-this.uiState.scrollX * layer.speed + layer.xOffset}px`;
         bgEl.style.backgroundPositionX = posX;
         if (bgEl.classList.contains('masked-custom')) {
           bgEl.style.webkitMaskPositionX = posX;
@@ -1290,22 +1290,22 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       if (fillEl) fillEl.style.height = `${this._fillerHeightFor(layer)}px`;
     });
 
-    this.state.pois.forEach(poi => {
+    this.uiState.pois.forEach(poi => {
       const poiEl = el.querySelector(`#poi-${poi.id}`);
       if (!poiEl) return;
       const layer = this.layerConfig.find(l => l.id === parseInt(poi.layer, 10));
       if (!layer) return;
-      const visualX = poi.xPos - (this.state.scrollX * layer.speed) + layer.xOffset;
+      const visualX = poi.xPos - (this.uiState.scrollX * layer.speed) + layer.xOffset;
       poiEl.style.transform = `translateX(${visualX}px) translateY(${layer.yOffset}px)`;
       poiEl.style.bottom = `${poi.offsetY}px`;
     });
   }
 
   /* ---------------- Horizon pan + POI free placement ---------------- */
-  _panMultiplier(){ return HORIZON_LENGTH_MUL[this.state.horizonLength] || HORIZON_LENGTH_MUL.far; }
+  _panMultiplier(){ return HORIZON_LENGTH_MUL[this.uiState.horizonLength] || HORIZON_LENGTH_MUL.far; }
   // Lock View only restricts panning in Player view — the GM can always
   // scroll (e.g. to set up the shot) before locking it for the players.
-  _canPan(){ return !(this.state.viewLocked && this.state.viewMode === 'player'); }
+  _canPan(){ return !(this.uiState.viewLocked && this.uiState.viewMode === 'player'); }
 
   _startPan(e){
     if (!this._canPan()) return;
@@ -1329,7 +1329,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     if (this._winResize) { this._onWindowResizeMove(e); return; }
     if (this._freeDockDrag) { this._onFreeDockDragMove(e); return; }
     if (!this._isPanning) return;
-    this.state.scrollX -= (e.clientX - this._panLastX) * this._panMultiplier();
+    this.uiState.scrollX -= (e.clientX - this._panLastX) * this._panMultiplier();
     this._panLastX = e.clientX;
     requestAnimationFrame(() => this._updateVisuals());
   }
@@ -1351,7 +1351,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
   _handleWindowTouchMove(e){
     if (!this._isPanning) return;
-    this.state.scrollX -= (e.touches[0].clientX - this._panLastX) * this._panMultiplier();
+    this.uiState.scrollX -= (e.touches[0].clientX - this._panLastX) * this._panMultiplier();
     this._panLastX = e.touches[0].clientX;
     requestAnimationFrame(() => this._updateVisuals());
   }
@@ -1362,7 +1362,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
      through this.setPosition() rather than raw element.style writes,
      keeping this.position accurate for anything else that reads it. */
   _startWindowDrag(e){
-    if (this.state.compactMode) return;
+    if (this.uiState.compactMode) return;
     this._closeSettings();
     const rect = this.element.getBoundingClientRect();
     this._winDrag = { startClientX: e.clientX, startClientY: e.clientY, startLeft: rect.left, startTop: rect.top };
@@ -1384,7 +1384,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   _startWindowResize(e){
-    if (this.state.compactMode) return;
+    if (this.uiState.compactMode) return;
     e.stopPropagation();
     e.preventDefault();
     this._closeSettings();
@@ -1471,7 +1471,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     return { inset, bottom };
   }
   _positionCompactDock(){
-    if (!this.state.compactMode || this.state.freeDock) return;
+    if (!this.uiState.compactMode || this.uiState.freeDock) return;
     const { inset, bottom } = this._measureDockGeometry();
     const el = this.element;
     el.style.left = `${inset}px`;
@@ -1509,7 +1509,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     el.style.setProperty('--free-dock-top', `${this._clampFreeDockY(top)}px`);
   }
   _startFreeDockDrag(e){
-    if (!this.state.compactMode || !this.state.freeDock) return;
+    if (!this.uiState.compactMode || !this.uiState.freeDock) return;
     e.stopPropagation();
     e.preventDefault();
     const rect = this.element.getBoundingClientRect();
@@ -1530,20 +1530,20 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
   }
 
   _enterCompact(){
-    if (this.state.compactMode) return;
+    if (this.uiState.compactMode) return;
     const el = this.element;
     this._savedRect = {
       left: el.style.left, top: el.style.top,
       width: el.style.width, height: el.style.height
     };
-    this.state.compactMode = true;
+    this.uiState.compactMode = true;
     el.classList.add('compact');
-    el.classList.toggle('free-dock', this.state.freeDock);
+    el.classList.toggle('free-dock', this.uiState.freeDock);
     el.style.left = ''; // clear any stale inline left so the CSS fallback can apply if #ui-left isn't found
     el.style.width = '';
     el.style.height = '';
     this._refreshCustomImageSizes();
-    if (this.state.freeDock) this._applyFreeDockPosition();
+    if (this.uiState.freeDock) this._applyFreeDockPosition();
     else this._positionCompactDock();
     // Re-measure on a light interval rather than chasing every possible
     // Foundry event that could resize the sidebar/hotbar — cheap, and
@@ -1553,9 +1553,9 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     this._renderPOIs();
   }
   _exitCompact(){
-    if (!this.state.compactMode) return;
+    if (!this.uiState.compactMode) return;
     const el = this.element;
-    this.state.compactMode = false;
+    this.uiState.compactMode = false;
     el.classList.remove('compact');
     el.classList.remove('free-dock');
     el.style.removeProperty('--free-dock-left');
@@ -1604,11 +1604,11 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     return {
       v: 1,
       layers: this.layerConfig.map(l => ({ ...l })),
-      pois: this.state.pois.map(p => ({ ...p })),
-      nextPoiId: this.state.nextPoiId,
-      horizonLength: this.state.horizonLength,
-      daytime: this.state.daytime,
-      viewLocked: this.state.viewLocked
+      pois: this.uiState.pois.map(p => ({ ...p })),
+      nextPoiId: this.uiState.nextPoiId,
+      horizonLength: this.uiState.horizonLength,
+      daytime: this.uiState.daytime,
+      viewLocked: this.uiState.viewLocked
     };
   }
   _scheduleSave(){
@@ -1640,11 +1640,11 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
       if (Array.isArray(payload.layers) && payload.layers.length) {
         payload.layers.forEach((saved, i) => { if (this.layerConfig[i] && saved) Object.assign(this.layerConfig[i], saved); });
       }
-      if (Array.isArray(payload.pois)) this.state.pois = payload.pois.map(p => ({ ...p }));
-      if (typeof payload.nextPoiId === 'number') this.state.nextPoiId = payload.nextPoiId;
-      if (payload.horizonLength) this.state.horizonLength = payload.horizonLength;
-      if (payload.daytime) this.state.daytime = payload.daytime;
-      if (typeof payload.viewLocked === 'boolean') this.state.viewLocked = payload.viewLocked;
+      if (Array.isArray(payload.pois)) this.uiState.pois = payload.pois.map(p => ({ ...p }));
+      if (typeof payload.nextPoiId === 'number') this.uiState.nextPoiId = payload.nextPoiId;
+      if (payload.horizonLength) this.uiState.horizonLength = payload.horizonLength;
+      if (payload.daytime) this.uiState.daytime = payload.daytime;
+      if (typeof payload.viewLocked === 'boolean') this.uiState.viewLocked = payload.viewLocked;
       if (rerender && this.rendered) this.render();
     } finally {
       this._applyingRemote = false;
@@ -1670,7 +1670,7 @@ class DistantHorizonsApp extends HandlebarsApplicationMixin(ApplicationV2) {
     if (!scene) return;
     this._paletteRev += 1;
     this._lastAppliedPaletteRev = this._paletteRev; // already applied locally by the caller
-    scene.setFlag(MODULE_ID, 'horizonPalette', { palette: this.state.palette, rev: this._paletteRev }).catch(err => {
+    scene.setFlag(MODULE_ID, 'horizonPalette', { palette: this.uiState.palette, rev: this._paletteRev }).catch(err => {
       console.error(`${MODULE_ID} | failed to push palette to scene`, err);
       ui.notifications?.error(game.i18n.localize('SHRIMPSDH.Notify.PaletteError'));
     });
@@ -1807,7 +1807,13 @@ Hooks.on('getSceneControlButtons', (controls) => {
     icon: 'fa-solid fa-mountain',
     toggle: true,
     active: !!foundry.applications.instances.get('dh-window'),
-    onClick: (toggled) => {
+    // Foundry v13's SceneControls core (#onChangeTool/#onChange) invokes
+    // tool.onChange(event, active) for every tool click, toggle or plain
+    // button alike — it never calls onClick. A tool can't be both
+    // toggle:true and button:true either; Foundry normalizes that down to
+    // toggle-only, so declaring both (as an earlier build of this file
+    // did) silently produced a button that did nothing when clicked.
+    onChange: (event, toggled) => {
       // Singleton toggle pattern (see the project's ApplicationV2
       // reference doc): open a fresh instance if none exists, close the
       // existing one otherwise. Any in-progress debounced scene save is
@@ -1822,8 +1828,7 @@ Hooks.on('getSceneControlButtons', (controls) => {
       } else {
         existing?.close();
       }
-    },
-    button: true
+    }
   };
   if (Array.isArray(notesControls.tools)) {
     notesControls.tools.push(tool);
