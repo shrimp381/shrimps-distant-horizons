@@ -127,6 +127,35 @@ ApplicationV2 port and full `game.i18n` localization. No new user-facing feature
   hardcoded in English in the script. A translator can add another language by dropping in
   a new `lang/<code>.json` with the same keys and registering it in `module.json` — no
   script changes needed.
+  
+  **v1.0.2** — fixes the scene-control button not opening the window at all, found
+right after v1.0.1 shipped the ApplicationV2 port. Two separate bugs, both in the
+new code:
+
+- **Fixed: the toolbar button did nothing.** The scene-control tool was declared
+  with both `toggle: true` and `button: true`, and its handler was named `onClick`.
+  Foundry v13's core `SceneControls` only ever calls a tool's `onChange(event, active)`
+  — never `onClick` — and it normalizes a tool that sets both `toggle` and `button`
+  down to toggle-only. So the click was recognized (the button visibly lit up) but
+  nothing was ever invoked. Renamed the handler to `onChange` and dropped the
+  redundant `button: true`.
+- **Fixed: opening the window threw and silently failed.** Once the click handler
+  above is actually reached, the app's constructor set `this.state = {...}` to hold
+  its own view/UI state (view mode, palette, compass settings, and so on) — but
+  Foundry's `ApplicationV2` base class already defines `state` as a getter-only
+  property (its own internal render-lifecycle enum), so assigning to `this.state`
+  throws `TypeError: Cannot set property state of #<ApplicationV2> which has only
+  a getter` the instant a window is constructed. Renamed the app's own state object
+  to `this.uiState` everywhere in the file (`poi.state`, the separate per-POI
+  discovery-state field, was untouched — that one was never the problem).
+- Both were introduced by the v1.0.1 ApplicationV2 rewrite and missed because the
+  mocked test harness used to verify that port stubbed a bare `ApplicationV2` without
+  its real getter-only `state` property, and stubbed the scene-control click path
+  as a direct function call rather than through Foundry's actual `SceneControls`
+  tool-dispatch logic — so neither bug could show up there. This round was verified
+  against the real, running Foundry instance instead: reproduced both failures live
+  (confirmed via the tool's own definition and a constructor-level exception with a
+  full stack trace), then confirmed the fix opens the window correctly.
 
 ## Project structure
 
