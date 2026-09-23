@@ -128,7 +128,7 @@ ApplicationV2 port and full `game.i18n` localization. No new user-facing feature
   a new `lang/<code>.json` with the same keys and registering it in `module.json` — no
   script changes needed.
   
-  **v1.0.2** — fixes the scene-control button not opening the window at all, found
+**v1.0.2** — fixes the scene-control button not opening the window at all, found
 right after v1.0.1 shipped the ApplicationV2 port. Two separate bugs, both in the
 new code:
 
