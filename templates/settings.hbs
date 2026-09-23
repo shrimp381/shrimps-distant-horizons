@@ -1,0 +1,77 @@
+{{!-- "settings" PART — the cog-button dropdown. Body-level (fixed, JS
+      positioned), toggled via the hidden attribute rather than re-rendered,
+      so it survives independently of the main window PART's re-renders. --}}
+<div id="dh-settings" class="{{#unless isGM}}player-mode{{/unless}}" hidden>
+  <h3>{{localize "SHRIMPSDH.Settings.Compass.Heading"}}</h3>
+  <div class="setting-sub">
+    <select id="opt-compass-mode" data-action="changeCompassMode">
+      <option value="full" {{#if compass.full}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Compass.ModeFull"}}</option>
+      <option value="simple" {{#if compass.simple}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Compass.ModeSimple"}}</option>
+      <option value="off" {{#if compass.off}}selected{{/if}}>{{localize "SHRIMPSDH.Settings.Compass.ModeOff"}}</option>
+    </select>
+  </div>
+  <div class="setting-sub" id="compass-opacity-row" style="{{#if compass.off}}display:none;{{else}}display:flex;{{/if}}">
+    <span class="label">{{localize "SHRIMPSDH.Settings.Compass.OpacityLabel"}}</span>
+    <input type="range" id="opt-compass-opacity" min="20" max="100" value="{{compassOpacityPct}}">
+  </div>
+  {{#if isGM}}
+  <div class="gm-only">
+    <div class="setting-row">
+      <label for="opt-draghint">{{localize "SHRIMPSDH.Settings.Compass.DragHintLabel"}}</label>
+      <input type="checkbox" id="opt-draghint" {{#if showDragHint}}checked{{/if}}>
+    </div>
+  </div>
+  {{/if}}
+  <hr>
+  <h3>{{localize "SHRIMPSDH.Settings.Palette.Heading"}}</h3>
+  <div class="setting-sub">
+    <select id="opt-palette" data-action="changePalette">
+      <option value="obsidian" {{#eq palette "obsidian"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Obsidian"}}</option>
+      <option value="verdant" {{#eq palette "verdant"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Verdant"}}</option>
+      <option value="crimson" {{#eq palette "crimson"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Crimson"}}</option>
+      <option value="arcane" {{#eq palette "arcane"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Arcane"}}</option>
+      <option value="ancient" {{#eq palette "ancient"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Ancient"}}</option>
+      <option value="desert" {{#eq palette "desert"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Desert"}}</option>
+      <option value="hellscape" {{#eq palette "hellscape"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Hellscape"}}</option>
+      <option value="shadow" {{#eq palette "shadow"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Shadow"}}</option>
+      <option value="fey" {{#eq palette "fey"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.Palette.Fey"}}</option>
+    </select>
+  </div>
+  {{#if isGM}}
+  <div class="gm-only">
+    <hr>
+    <h3>{{localize "SHRIMPSDH.Settings.POIIcons.Heading"}}</h3>
+    <div class="setting-row">
+      <label for="opt-fullcolour">{{localize "SHRIMPSDH.Settings.POIIcons.FullColourLabel"}}</label>
+      <input type="checkbox" id="opt-fullcolour" {{#if fullColourIcons}}checked{{/if}}>
+    </div>
+    <div class="setting-note">{{localize "SHRIMPSDH.Settings.POIIcons.FullColourNote"}}</div>
+  </div>
+  <div class="gm-only">
+    <hr>
+    <h3>{{localize "SHRIMPSDH.Settings.HorizonLength.Heading"}}</h3>
+    <div class="setting-sub">
+      <select id="opt-horizon-length" data-action="changeHorizonLength">
+        <option value="far" {{#eq horizonLength "far"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Far"}}</option>
+        <option value="medium" {{#eq horizonLength "medium"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Medium"}}</option>
+        <option value="close" {{#eq horizonLength "close"}}selected{{/eq}}>{{localize "SHRIMPSDH.Settings.HorizonLength.Close"}}</option>
+      </select>
+    </div>
+    <div class="setting-note" id="horizon-length-desc">{{horizonLengthDesc}}</div>
+  </div>
+  <div class="gm-only">
+    <hr>
+    <h3>{{localize "SHRIMPSDH.Settings.Docking.Heading"}}</h3>
+    <div class="setting-row">
+      <label for="opt-free-dock">{{localize "SHRIMPSDH.Settings.Docking.FreeDockLabel"}}</label>
+      <input type="checkbox" id="opt-free-dock" {{#if freeDock}}checked{{/if}}>
+    </div>
+    <div class="setting-note">{{localize "SHRIMPSDH.Settings.Docking.FreeDockNote"}}</div>
+  </div>
+  <div class="gm-only">
+    <hr>
+    <h3>{{localize "SHRIMPSDH.Settings.Window.Heading"}}</h3>
+    <button type="button" class="btn" id="dh-reset-btn" data-action="resetWindowPosition">{{localize "SHRIMPSDH.Settings.Window.ResetBtn"}}</button>
+  </div>
+  {{/if}}
+</div>

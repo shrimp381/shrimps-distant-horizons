@@ -1,6 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Spectral:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap');
 
-  :root{
+  /* Everything this module injects (the floating window, plus the
+     body-level settings/info/journal popups) lives inside this one
+     wrapper div (see injectDistantHorizonsMarkup()) — so all custom
+     properties, the palette attribute, and the box-sizing reset below are
+     scoped to it, NOT to :root/html/body. Scoping to :root/body would
+     leak this module's own CSS variables, font-family, box-sizing and
+     (worst of all) a dark background + hidden overflow onto Foundry's
+     real page chrome and every other module's UI — that was a real bug
+     in earlier versions, ported over unnoticed from the artifact preview
+     page (which legitimately owned the whole page/body it ran in; a
+     floating window inside real Foundry never should). */
+  #shrimp-distant-horizons-root{
     --ink-950:#0b0e14;
     --ink-900:#111521;
     --ink-800:#181d2c;
@@ -15,48 +26,42 @@
     --ok:#7fae6f;
     --warn:#d9a441;
     font-family: 'Spectral', Georgia, 'Times New Roman', serif;
+    color:var(--parchment);
   }
-  :root[data-palette="verdant"]{
+  #shrimp-distant-horizons-root[data-palette="verdant"]{
     --ink-950:#0a120d; --ink-900:#0f1b14; --ink-800:#16261c; --ink-700:#213627; --ink-600:#2f4d38; --ink-500:#456b4f;
     --parchment:#e7e9dc; --parchment-dim:#a9b39c; --brass:#8fae4f; --brass-bright:#b6d472;
   }
-  :root[data-palette="crimson"]{
+  #shrimp-distant-horizons-root[data-palette="crimson"]{
     --ink-950:#150b0d; --ink-900:#1f1114; --ink-800:#2b171b; --ink-700:#3c2027; --ink-600:#55303a; --ink-500:#7a4552;
     --parchment:#efe1e0; --parchment-dim:#c1a3a1; --brass:#c9524b; --brass-bright:#e8756a;
   }
-  :root[data-palette="arcane"]{
+  #shrimp-distant-horizons-root[data-palette="arcane"]{
     --ink-950:#0d0b16; --ink-900:#151222; --ink-800:#1e1a30; --ink-700:#2b2545; --ink-600:#3d3562; --ink-500:#584c86;
     --parchment:#e6e2f4; --parchment-dim:#aba3c9; --brass:#8f7fe0; --brass-bright:#b0a3f2;
   }
-  :root[data-palette="ancient"]{
+  #shrimp-distant-horizons-root[data-palette="ancient"]{
     --ink-950:#efe4c8; --ink-900:#e8dbb8; --ink-800:#ddcc9f; --ink-700:#c9b483; --ink-600:#a68f5c; --ink-500:#8a744a;
     --parchment:#3a2e1a; --parchment-dim:#6b5636; --brass:#8a4a2a; --brass-bright:#b06a3a;
   }
-  :root[data-palette="desert"]{
+  #shrimp-distant-horizons-root[data-palette="desert"]{
     --ink-950:#1c140a; --ink-900:#2a1f12; --ink-800:#3a2c1a; --ink-700:#4f3d24; --ink-600:#6b5632; --ink-500:#8a7248;
     --parchment:#f2e2c4; --parchment-dim:#c9b48c; --brass:#d98c3a; --brass-bright:#f0ab5c;
   }
-  :root[data-palette="hellscape"]{
+  #shrimp-distant-horizons-root[data-palette="hellscape"]{
     --ink-950:#0c0605; --ink-900:#160907; --ink-800:#20100b; --ink-700:#341811; --ink-600:#4d2015; --ink-500:#6e2c1a;
     --parchment:#f2ddd0; --parchment-dim:#c99a86; --brass:#e0451f; --brass-bright:#ff7a3d;
   }
-  :root[data-palette="shadow"]{
+  #shrimp-distant-horizons-root[data-palette="shadow"]{
     --ink-950:#08090b; --ink-900:#0e1013; --ink-800:#15181c; --ink-700:#20242a; --ink-600:#2e343c; --ink-500:#454d57;
     --parchment:#d8dee6; --parchment-dim:#8f98a4; --brass:#6f8fae; --brass-bright:#9ac0e0;
   }
-  :root[data-palette="fey"]{
+  #shrimp-distant-horizons-root[data-palette="fey"]{
     --ink-950:#0b0f1c; --ink-900:#121a2c; --ink-800:#1a2440; --ink-700:#26325c; --ink-600:#3a4a82; --ink-500:#5568ac;
     --parchment:#e8e6ff; --parchment-dim:#b3aee0; --brass:#6fd8c0; --brass-bright:#c9a6f5;
   }
-  *{ box-sizing:border-box; }
-  html,body{ height:100%; }
-  body{
-    margin:0;
-    overflow:hidden;
-    color:var(--parchment);
-    font-family:'Spectral', Georgia, serif;
-    background: var(--ink-950);
-  }
+  #shrimp-distant-horizons-root,
+  #shrimp-distant-horizons-root *{ box-sizing:border-box; }
 
   .mono{ font-family:'JetBrains Mono','Courier New',monospace; }
   .label{
@@ -103,7 +108,18 @@
     box-shadow:0 18px 40px rgba(0,0,0,.55);
     display:flex; flex-direction:column;
     overflow:hidden;
+    margin:0; padding:0;
   }
+  /* ApplicationV2 (this app is window.frame:false, but PARTS still each
+     render into their own wrapper <div>, one per static PARTS entry —
+     "window"/"settings"/"layersInfo" — as a direct child of #dh-window.
+     Collapsing that wrapper with display:contents keeps the flex-column
+     layout below (#dh-window > #dh-titlebar / #horizon-wrap / #controls /
+     #dh-resize-handle) working exactly as it did when those were literal
+     direct children with no ApplicationV2 involved. The settings/info
+     popups are position:fixed and unaffected either way — an ancestor's
+     display:contents doesn't establish a containing block. */
+  #dh-window > div{ display:contents; }
 
   #dh-titlebar{
     flex:0 0 auto;
@@ -411,21 +427,24 @@
     width:42px; text-align:right; font-variant-numeric:tabular-nums; flex:0 0 auto;
   }
 
-  select{
+  /* Bare tag selectors below are scoped to our own root — unscoped, they'd
+     restyle every <select>/<input type=range>/<table> in all of Foundry's
+     core UI and every other module's windows, not just ours. */
+  #shrimp-distant-horizons-root select{
     background:var(--ink-800); border:1px solid var(--ink-600); color:var(--parchment);
     font-family:'JetBrains Mono',monospace; font-size:10px;
     border-radius:2px; padding:3px 4px; outline:none;
   }
-  select:focus{ border-color:var(--brass); }
+  #shrimp-distant-horizons-root select:focus{ border-color:var(--brass); }
 
-  input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; background:transparent; }
-  input[type=range]::-webkit-slider-runnable-track{ width:100%; height:3px; background:var(--ink-600); border-radius:2px; }
-  input[type=range]::-webkit-slider-thumb{
+  #shrimp-distant-horizons-root input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; background:transparent; }
+  #shrimp-distant-horizons-root input[type=range]::-webkit-slider-runnable-track{ width:100%; height:3px; background:var(--ink-600); border-radius:2px; }
+  #shrimp-distant-horizons-root input[type=range]::-webkit-slider-thumb{
     -webkit-appearance:none; appearance:none; height:12px; width:12px; border-radius:50%;
     background:var(--brass-bright); border:1px solid var(--ink-950); cursor:pointer; margin-top:-4.5px;
   }
-  input[type=range]::-moz-range-track{ height:3px; background:var(--ink-600); border-radius:2px; }
-  input[type=range]::-moz-range-thumb{ height:12px; width:12px; border-radius:50%; background:var(--brass-bright); border:1px solid var(--ink-950); cursor:pointer; }
+  #shrimp-distant-horizons-root input[type=range]::-moz-range-track{ height:3px; background:var(--ink-600); border-radius:2px; }
+  #shrimp-distant-horizons-root input[type=range]::-moz-range-thumb{ height:12px; width:12px; border-radius:50%; background:var(--brass-bright); border:1px solid var(--ink-950); cursor:pointer; }
 
   .btn{
     font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:.05em;
@@ -451,7 +470,7 @@
   .icon-btn.small svg{ width:11px; height:11px; }
 
   #poi-table-wrap{ flex:1; overflow:auto; background:var(--ink-950); border:1px solid var(--ink-700); border-radius:3px; }
-  table{ width:100%; min-width:540px; border-collapse:collapse; }
+  #shrimp-distant-horizons-root table{ width:100%; min-width:540px; border-collapse:collapse; }
   thead th{
     position:sticky; top:0; background:var(--ink-900);
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:.08em;
